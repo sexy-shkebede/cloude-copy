@@ -47,6 +47,14 @@
             word-break: break-word;
         }
 
+        .ai-message {
+            font-size: 15px;
+            color: #d1d1d1;
+            line-height: 1.6;
+            width: 100%;
+            word-break: break-word;
+        }
+
         .icon-btn {
             color: var(--text-muted);
             transition: color 0.2s;
@@ -88,7 +96,7 @@
 
     <!-- Header -->
     <header class="flex items-center justify-between px-4 py-3 shrink-0 z-10 bg-[#1a1a1a]">
-        <button class="text-[#8e8e8e] hover:text-[#e5e5e5]">
+        <button onclick="resetChat()" class="text-[#8e8e8e] hover:text-[#e5e5e5]" title="New chat">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 <line x1="9" y1="3" x2="9" y2="21"></line>
@@ -101,17 +109,13 @@
 
         <div class="flex items-center gap-3">
             <button class="bg-[#2b2b2b] hover:bg-[#333] text-[#e5e5e5] text-[12px] font-medium px-2.5 py-1 rounded-full border border-[#383838] transition-colors">
-                Free plan · Upgrade
-            </button>
-            <button class="text-[#8e8e8e] hover:text-[#e5e5e5]">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+                claude-fable-5
             </button>
         </div>
     </header>
 
     <!-- CONTAINER 1: Welcome Screen (Initial) -->
     <div id="welcome-screen" class="flex-1 flex flex-col items-center justify-center px-4 pb-20 select-none">
-        <!-- Claude Icon & Title -->
         <div class="flex flex-col items-center mb-8">
             <svg class="animate-star mb-3" width="46" height="46" viewBox="0 0 256 257" version="1.1" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid">
                 <title>Claude</title>
@@ -132,8 +136,7 @@
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     </button>
                     <button class="flex items-center gap-1.5 text-[#e5e5e5] text-[13px] font-medium hover:bg-[#3d3d3d] px-2 py-1 rounded-lg transition-colors">
-                        Sonnet 5 <span class="text-[#8e8e8e] font-normal">Medium</span>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#8e8e8e]"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        claude-fable-5
                     </button>
                 </div>
                 
@@ -150,32 +153,21 @@
 
         <!-- Suggestion Chips -->
         <div class="flex flex-wrap justify-center gap-2 mt-4 max-w-sm">
-            <button class="chip-btn" onclick="fillPrompt('Write a story')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg> Write
-            </button>
-            <button class="chip-btn" onclick="fillPrompt('Learn something new')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg> Learn
-            </button>
-            <button class="chip-btn" onclick="fillPrompt('Write code for')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg> Code
-            </button>
-            <button class="chip-btn" onclick="fillPrompt('Life stuff')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg> Life stuff
-            </button>
-            <button class="chip-btn" onclick="fillPrompt('Claude\'s choice')">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"></path></svg> Claude's choice
-            </button>
+            <button class="chip-btn" onclick="fillPrompt('Write a story')">Write</button>
+            <button class="chip-btn" onclick="fillPrompt('Learn something new')">Learn</button>
+            <button class="chip-btn" onclick="fillPrompt('Write code for')">Code</button>
+            <button class="chip-btn" onclick="fillPrompt('Life stuff')">Life stuff</button>
         </div>
     </div>
 
     <!-- CONTAINER 2: Chat Screen (Hidden Initially) -->
     <div id="chat-screen" class="flex-1 overflow-y-auto px-4 pt-4 pb-[130px] flex flex-col gap-6 hidden">
-        <!-- Messages will be injected here -->
+        <!-- Messages injected here -->
     </div>
 
-    <!-- Bottom Input Area for Active Chat (Hidden Initially) -->
+    <!-- Bottom Input Area for Active Chat -->
     <div id="chat-footer" class="absolute bottom-0 w-full bg-[#1a1a1a] px-4 pb-4 pt-2 hidden">
-        <div class="bg-[#2b2b2b] rounded-[22px] min-h-[100px] p-3 flex flex-col justify-between border border-[#383838]">
+        <div class="bg-[#2b2b2b] rounded-[22px] min-h-[60px] p-3 flex flex-col justify-between border border-[#383838]">
             <textarea id="chat-input" rows="1" placeholder="Reply to Claude..." class="w-full bg-transparent text-[#e5e5e5] placeholder-[#757575] text-[15px] resize-none focus:outline-none px-1 pt-1"></textarea>
             
             <div class="flex items-center justify-between mt-2">
@@ -183,17 +175,11 @@
                     <button class="w-8 h-8 flex items-center justify-center text-[#e5e5e5] rounded-full hover:bg-[#3d3d3d] transition-colors">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                     </button>
-                    <button class="flex items-center gap-1.5 text-[#e5e5e5] text-[13px] font-medium hover:bg-[#3d3d3d] px-2 py-1 rounded-lg transition-colors">
-                        Sonnet 5 <span class="text-[#8e8e8e] font-normal">Medium</span>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-[#8e8e8e]"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                    </button>
+                    <span class="text-[12px] text-[#8e8e8e]">claude-fable-5</span>
                 </div>
                 
                 <div class="flex items-center gap-2 text-[#e5e5e5]">
-                    <button class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[#3d3d3d] transition-colors">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path></svg>
-                    </button>
-                    <button class="w-8 h-8 flex items-center justify-center rounded-full bg-[#d97757] text-white transition-colors">
+                    <button onclick="sendChatMessage()" class="w-8 h-8 flex items-center justify-center rounded-full bg-[#d97757] text-white transition-colors">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
                     </button>
                 </div>
@@ -207,6 +193,7 @@
     <script>
         const welcomeInput = document.getElementById('welcome-input');
         const sendBtn = document.getElementById('send-welcome-btn');
+        const chatInput = document.getElementById('chat-input');
 
         welcomeInput.addEventListener('input', () => {
             if (welcomeInput.value.trim().length > 0) {
@@ -225,27 +212,83 @@
             sendBtn.style.color = '#ffffff';
         }
 
-        function submitMessage() {
+        async function submitMessage() {
             const text = welcomeInput.value.trim();
             if (!text) return;
+            welcomeInput.value = '';
 
+            switchToChat(text);
+            await fetchAIResponse(text);
+        }
+
+        async function sendChatMessage() {
+            const text = chatInput.value.trim();
+            if (!text) return;
+            chatInput.value = '';
+
+            appendUserMessage(text);
+            await fetchAIResponse(text);
+        }
+
+        function switchToChat(text) {
             document.getElementById('welcome-screen').classList.add('hidden');
             document.getElementById('chat-screen').classList.remove('hidden');
             document.getElementById('chat-footer').classList.remove('hidden');
             document.getElementById('header-title').classList.remove('hidden');
 
+            appendUserMessage(text);
+        }
+
+        function appendUserMessage(text) {
             const chatScreen = document.getElementById('chat-screen');
-            chatScreen.innerHTML = `
+            chatScreen.innerHTML += `
                 <div class="flex flex-col items-end">
                     <div class="user-bubble">${escapeHtml(text)}</div>
-                    <div class="flex items-center gap-3 mt-2 text-[#8e8e8e] text-[12px] mr-1">
-                        <span>Just now</span>
-                        <button class="icon-btn" title="Edit">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                        </button>
-                    </div>
+                    <span class="text-[#8e8e8e] text-[12px] mt-1 mr-1">Just now</span>
                 </div>
             `;
+            chatScreen.scrollTop = chatScreen.scrollHeight;
+        }
+
+        function appendAIMessage(text) {
+            const chatScreen = document.getElementById('chat-screen');
+            chatScreen.innerHTML += `
+                <div class="flex flex-col items-start w-full">
+                    <div class="ai-message">${escapeHtml(text)}</div>
+                </div>
+            `;
+            chatScreen.scrollTop = chatScreen.scrollHeight;
+        }
+
+        async function fetchAIResponse(message) {
+            appendAIMessage("Думаю...");
+            const chatScreen = document.getElementById('chat-screen');
+            
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+                const data = await response.json();
+                
+                // Удаляем сообщение "Думаю..."
+                chatScreen.lastChild.remove();
+
+                if (response.ok) {
+                    appendAIMessage(data.reply);
+                } else {
+                    appendAIMessage("Ошибка: " + (data.error || 'Не удалось получить ответ'));
+                }
+            } catch (err) {
+                chatScreen.lastChild.remove();
+                appendAIMessage("Ошибка сети при обращении к серверу.");
+            }
+        }
+
+        async function resetChat() {
+            await fetch('/api/reset', { method: 'POST' });
+            location.reload();
         }
 
         function escapeHtml(string) {
@@ -258,7 +301,13 @@
                 submitMessage();
             }
         });
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChatMessage();
+            }
+        });
     </script>
 </body>
 </html>
-
