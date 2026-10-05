@@ -178,7 +178,12 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     remember_user(update)
     u = update.effective_user
     caption = texts.start_caption(u.first_name or "друг", db.get_balance(u.id), config.PRICE_STARS, is_free(u.id))
-    await show_photo_screen(update, context, "banner", banner_image, caption, main_menu_kb(u.id))
+    try:
+        await show_photo_screen(update, context, "banner", banner_image, caption, main_menu_kb(u.id))
+    except BadRequest as e:  # Telegram не принял свою картинку (битый файл, > 10 МБ) — показываем нарисованную
+        log.warning("Картинка приветствия отклонена Telegram (%s) — использую нарисованный баннер", e)
+        await show_photo_screen(update, context, "banner_generated",
+                                lambda: render_banner(config.BRAND, config.PRICE_STARS), caption, main_menu_kb(u.id))
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
