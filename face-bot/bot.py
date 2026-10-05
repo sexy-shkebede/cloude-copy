@@ -715,6 +715,8 @@ def main() -> None:
     except RuntimeError as e:
         log.error("%s", e)
         sys.exit(2)
+    if not config.BANNER_PATH.is_file():
+        log.warning("Картинка приветствия %s не найдена — использую нарисованный баннер", config.BANNER_PATH)
     app = build_app(config.BOT_TOKEN)
     app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)
 

@@ -53,7 +53,7 @@ BRAND = os.environ.get("BOT_BRAND", "I WANNA MOG YOU").strip() or "I WANNA MOG Y
 ANALYSIS_WORKERS = max(1, _int("ANALYSIS_WORKERS", 1))  # одновременных анализов (телефон — 1)
 
 # Картинка приветствия после /start. Если файла нет — бот нарисует баннер сам
-BANNER_PATH = BASE_DIR / (os.environ.get("BANNER_PATH", "").strip() or "assets/banner.jpg")
+BANNER_PATH = BASE_DIR / Path(os.environ.get("BANNER_PATH", "").strip() or "assets/banner.jpg").expanduser()
 
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = Path(os.environ.get("DB_PATH", DATA_DIR / "bot.db"))

@@ -11,37 +11,40 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
-BG = (11, 15, 26)
-CARD = (20, 26, 42)
-TEXT = (234, 240, 255)
-MUTED = (138, 148, 178)
-CYAN = (61, 242, 255)
-MAGENTA = (255, 79, 216)
-GOLD = (255, 200, 87)
-GREEN = (61, 220, 151)
-RED = (255, 92, 122)
-VIOLET = (138, 92, 255)
+# «Огненная» палитра в стиле приветственного баннера
+BG = (13, 6, 3)  # почти чёрный с коричневым
+EMBER = (46, 16, 5)  # тёмный жар для градиентов
+PANEL = (22, 9, 4)  # шапки и подвалы
+TEXT = (255, 246, 236)
+MUTED = (196, 152, 120)
+ORANGE = (255, 122, 26)  # основной неон: сетка, контуры
+AMBER = (255, 168, 38)
+GOLD = (255, 205, 64)  # плашки, трети, E-линия
+FLAME = (255, 74, 36)  # красно-оранжевый акцент
+CREAM = (255, 230, 200)  # светлые вспомогательные линии
+RED = (255, 64, 64)
+
+
+WEIGHTS = {"regular": 450, "semibold": 600, "bold": 760, "display": 880}
 
 
 @lru_cache(maxsize=64)
 def font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont:
-    """weight: regular | semibold | bold | display."""
+    """weight: regular | semibold | bold | display (жирный, как заголовок баннера)."""
     try:
-        if weight == "display":
-            return ImageFont.truetype(str(FONTS_DIR / "RussoOne-Regular.ttf"), size)
         f = ImageFont.truetype(str(FONTS_DIR / "Montserrat-Variable.ttf"), size)
-        try:
-            f.set_variation_by_axes([{"regular": 450, "semibold": 600, "bold": 760}.get(weight, 450)])
-        except Exception:
-            pass
-        return f
     except OSError:
         return ImageFont.load_default()
+    try:
+        f.set_variation_by_axes([WEIGHTS.get(weight, 450)])
+    except Exception:  # FreeType без поддержки вариативных шрифтов — останется обычное начертание
+        pass
+    return f
 
 
 def score_color(score: float) -> tuple[int, int, int]:
-    """Красный (низко) → золотой → зелёный (высоко) по шкале 0..10."""
-    stops = [(0.0, RED), (5.0, RED), (6.5, GOLD), (8.0, GREEN), (10.0, CYAN)]
+    """Красный (низко) → оранжевый → золотой (высоко) по шкале 0..10."""
+    stops = [(0.0, RED), (5.0, RED), (6.5, ORANGE), (8.0, GOLD), (10.0, (255, 240, 150))]
     s = max(0.0, min(10.0, score))
     for (a, ca), (b, cb) in zip(stops, stops[1:]):
         if s <= b:
@@ -82,6 +85,38 @@ def vignette(img: Image.Image, strength: float = 0.55) -> Image.Image:
 def darken(img: Image.Image, amount: float = 0.35, tint: tuple = BG) -> Image.Image:
     overlay = Image.new("RGB", img.size, tint)
     return Image.blend(img.convert("RGB"), overlay, amount)
+
+
+def warm_grade(img: Image.Image, amount: float = 0.3) -> Image.Image:
+    """Тёплая «огненная» цветокоррекция фото, как на баннере."""
+    from PIL import ImageOps
+
+    toned = ImageOps.colorize(img.convert("L"), black=(12, 4, 2), mid=(150, 70, 30), white=(255, 214, 170))
+    return Image.blend(img.convert("RGB"), toned, amount)
+
+
+def light_streaks(img: Image.Image, seed: int = 0, strength: float = 1.0) -> Image.Image:
+    """Размытые огненные шлейфы света на фоне."""
+    w, h = img.size
+    rng = np.random.RandomState(seed)
+    layer = Image.new("RGB", (w, h), (0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for i in range(7):
+        y0 = rng.uniform(-0.2, 1.1) * h
+        amp = rng.uniform(0.1, 0.35) * h
+        tilt = rng.uniform(-0.5, 0.5) * h
+        phase = rng.uniform(0, math.pi)
+        xs = np.linspace(-0.1 * w, 1.1 * w, 60)
+        ys = y0 + tilt * (xs / w) + amp * np.sin(xs / w * math.pi * rng.uniform(0.6, 1.4) + phase)
+        col = ORANGE if i % 3 else AMBER
+        k = rng.uniform(0.35, 0.8)
+        d.line(list(zip(xs.tolist(), ys.tolist())), fill=tuple(int(c * k) for c in col), width=int(rng.uniform(2, 7)))
+    glow = layer.filter(ImageFilter.GaussianBlur(14))
+    core = layer.filter(ImageFilter.GaussianBlur(2))
+    arr = np.asarray(img.convert("RGB"), np.float32)
+    add = (np.asarray(glow, np.float32) * 0.9 + np.asarray(core, np.float32) * 0.5) * strength
+    out = 255 - (255 - arr) * (255 - add.clip(0, 255)) / 255  # режим «экран»
+    return Image.fromarray(out.clip(0, 255).astype(np.uint8), "RGB")
 
 
 class Neon:
