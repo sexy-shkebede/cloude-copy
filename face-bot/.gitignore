@@ -1,0 +1,7 @@
+.env
+data/
+selftest_out/
+models/lbfmodel.yaml
+models/*.part
+__pycache__/
+*.pyc
