@@ -16,13 +16,12 @@ def bar(score: float, length: int = 10) -> str:
     return "▰" * filled + "▱" * (length - filled)
 
 
-def start_caption(name: str, brand: str, balance: int, price: int, unlimited: bool) -> str:
+def start_caption(name: str, balance: int, price: int, unlimited: bool) -> str:
     bal = "∞ (админ)" if unlimited else f"{balance} {ratings_word(balance)}"
     return (
         f"👋 Привет, <b>{escape(name)}</b>!\n\n"
-        f"<b>{escape(brand)}</b> — оценка внешности по пропорциям лица.\n"
-        "Я размечу лицо по 68 точкам, проверю трети, пятые, симметрию и профиль, "
-        "а затем поставлю балл каждой части лица и итоговую оценку.\n\n"
+        "Пришли два фото — анфас и профиль 90°, а я сделаю разлиновку лица, "
+        "оценю каждую его часть и поставлю итоговый балл.\n\n"
         f"💰 Баланс: <b>{bal}</b>\n"
         f"⭐ 1 оценка = <b>{price} звёзд</b>\n\n"
         "Выбери, как продолжить 👇"

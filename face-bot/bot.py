@@ -167,13 +167,18 @@ async def cleanup_sessions(app: Application) -> None:
 
 
 # ---------------------------------------------------------------- экраны
+def banner_image() -> bytes:
+    """Своя картинка приветствия из assets/banner.jpg, иначе — нарисованный баннер."""
+    if config.BANNER_PATH.is_file():
+        return config.BANNER_PATH.read_bytes()
+    return render_banner(config.BRAND, config.PRICE_STARS)
+
+
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     remember_user(update)
     u = update.effective_user
-    caption = texts.start_caption(u.first_name or "друг", config.BRAND, db.get_balance(u.id), config.PRICE_STARS,
-                                  is_free(u.id))
-    await show_photo_screen(update, context, "banner", lambda: render_banner(config.BRAND, config.PRICE_STARS),
-                            caption, main_menu_kb(u.id))
+    caption = texts.start_caption(u.first_name or "друг", db.get_balance(u.id), config.PRICE_STARS, is_free(u.id))
+    await show_photo_screen(update, context, "banner", banner_image, caption, main_menu_kb(u.id))
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
