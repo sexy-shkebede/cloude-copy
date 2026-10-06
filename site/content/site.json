@@ -147,5 +147,11 @@
       "text": "Опасный тренд с ударами по костям лица. Врачи против: риск переломов, гематом и травм нервов."
     }
   ],
-  "url": "https://sexy-shkebede.github.io/cloude-copy"
+  "url": "https://sexy-shkebede.github.io/cloude-copy",
+  "bot": {
+    "url": "https://t.me/pslrateartem_bot",
+    "handle": "@pslrateartem_bot",
+    "label": "Оценить себя",
+    "pitch": "Тот же алгоритм работает в Telegram. Пришлите боту два фото, анфас и профиль 90°, и он сделает такую же разлиновку и поставит баллы каждой части лица."
+  }
 }

@@ -22,18 +22,22 @@ ROOT = Path(__file__).resolve().parent
 OUT = ROOT.parent / "docs"
 CONTENT = ROOT / "content"
 SITE_URL = ""  # задаётся в main(): переменная окружения SITE_URL или поле "url" в site.json
+BOT: dict = {}  # ссылка на Telegram-бота, поле "bot" в site.json
 
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"]
 MET_CREDIT = "Фото: The Metropolitan Museum of Art, Open Access (CC0)."
 DASHES = re.compile("[\u2013\u2014]")
 
 # Короткие слова, после которых ставим неразрывный пробел (русская типографика)
-SHORT_WORDS = re.compile(r"(?<![\w-])(в|во|к|ко|с|со|у|о|об|и|а|но|на|по|за|из|от|до|не|ни|же|ли|бы|без|для|при|про|что|как|это|его|её|их|все|всё)\s", re.I)
+SHORT_WORDS = re.compile(r"(?<![\w-])(в|во|к|ко|с|со|у|о|об|и|а|но|на|по|за|из|от|до|не|ни|без|для|при|про|что|как|это|его|её|их|все|всё)\s", re.I)
+# Частицы «же», «ли», «бы» держатся за предыдущее слово
+PARTICLES = re.compile(r"\s(же|ли|бы)(?=[\s,.!?:;»)]|$)")
 
 
 def typo(text: str) -> str:
     text = text.replace("I WANNA MOG YOU", "I\u00a0WANNA\u00a0MOG\u00a0YOU")
     text = SHORT_WORDS.sub(lambda m: m.group(1) + "\u00a0", text)
+    text = PARTICLES.sub(lambda m: "\u00a0" + m.group(1), text)
     text = re.sub(r"(\d)\s(%|мм|см|мин|г\.|гг\.|в\.|балл)", "\\1\u00a0\\2", text)
     return text
 
@@ -128,11 +132,20 @@ NAV = [("Главное", "index.html#glavnoe"), ("Эксперимент", "ind
        ("Словарь", "index.html#slovar"), ("О проекте", "about.html")]
 
 
+def bot_button(extra_class: str = "") -> str:
+    """Кнопка на бота. Подпись одна на всём сайте: одно действие, одна формулировка."""
+    if not BOT:
+        return ""
+    return (f'<a class="btn btn-accent {extra_class}" href="{attr(BOT["url"])}" target="_blank" rel="noopener">'
+            f'<span>{e(BOT["label"])}</span><i class="ph ph-arrow-up-right" aria-hidden="true"></i></a>')
+
+
 def header(prefix: str, current: str = "") -> str:
     current_attr = ' aria-current="page"'
     links = "".join(
         f'<a href="{prefix}{href}"{current_attr if href == current else ""}>{label}</a>' for label, href in NAV
     )
+    mobile_links = links + bot_button("mobile-cta")
     return f"""<body>
 <a class="skip-link" href="#main">К содержанию</a>
 <header class="site-header">
@@ -140,12 +153,13 @@ def header(prefix: str, current: str = "") -> str:
     <a class="logo" href="{prefix}index.html" aria-label="Канон, на главную"><span class="logo-mark" aria-hidden="true"></span>Канон</a>
     <nav class="nav" aria-label="Разделы">{links}</nav>
     <div class="bar-actions">
+      {bot_button("header-cta")}
       <button class="icon-btn theme-toggle" type="button" aria-label="Сменить тему"><i class="ph ph-moon" aria-hidden="true"></i><i class="ph ph-sun" aria-hidden="true"></i></button>
       <button class="icon-btn menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav" aria-label="Открыть меню"><i class="ph ph-list" aria-hidden="true"></i></button>
     </div>
   </div>
 </header>
-<nav class="mobile-nav" id="mobile-nav" aria-label="Меню">{links}</nav>"""
+<nav class="mobile-nav" id="mobile-nav" aria-label="Меню">{mobile_links}</nav>"""
 
 
 def footer(prefix: str, site: dict) -> str:
@@ -158,6 +172,7 @@ def footer(prefix: str, site: dict) -> str:
         <a href="{prefix}index.html#lenta">Лента</a>
         <a href="{prefix}index.html#slovar">Словарь</a>
         <a href="{prefix}about.html">О проекте</a>
+        {f'<a href="{attr(BOT["url"])}" target="_blank" rel="noopener">Бот {e(BOT["handle"])}</a>' if BOT else ''}
       </div>
     </div>
     <div class="footer-note">
@@ -281,7 +296,7 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
         <h2>{e(exp['title'])}</h2>
         <p>{e(exp['text'])}</p>
         <dl class="stats">{stats}</dl>
-        <a class="more-link" href="{article_url(exp['slug'], p)}">Читать эксперимент <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
+        <div class="actions">{bot_button()}<a class="more-link" href="{article_url(exp['slug'], p)}">Читать эксперимент <i class="ph ph-arrow-right" aria-hidden="true"></i></a></div>
       </div>
       <div class="experiment-figures" data-reveal>{figs}</div>
     </div>
@@ -340,13 +355,28 @@ def render_blocks(a: dict, site: dict, p: str) -> str:
                 out.append(f'<div class="figure-pair">{figs}</div>')
             out.append(f"<h2>{e(b['text'])}</h2>")
         elif t == "p":
-            out.append(f"<p>{e(b['text'])}</p>")
+            text = e(b["text"])
+            if BOT:
+                brand = "I\u00a0WANNA\u00a0MOG\u00a0YOU"
+                text = text.replace(brand, f'<a href="{attr(BOT["url"])}" target="_blank" rel="noopener">{brand}</a>', 1)
+            out.append(f"<p>{text}</p>")
         elif t == "quote":
             text = b["text"].strip().strip("«»\"")
             out.append(f"<blockquote><p>«{e(text)}»</p><footer>{e(b.get('cite', ''))}</footer></blockquote>")
         elif t == "ul":
             out.append("<ul>" + "".join(f"<li>{e(i)}</li>" for i in b.get("items") or []) + "</ul>")
     return "\n".join(out)
+
+
+def bot_aside(a: dict, site: dict) -> str:
+    """Приглашение в бота под статьёй-экспериментом."""
+    if not BOT or a["slug"] != site["experiment"]["slug"]:
+        return ""
+    return f"""<aside class="narrow"><div class="bot-cta">
+      <h2>Проверьте свои пропорции</h2>
+      <p>{e(BOT["pitch"])}</p>
+      <div class="actions">{bot_button()}<span class="bot-handle">{e(BOT["handle"])}</span></div>
+    </div></aside>"""
 
 
 def render_article(a: dict, arts: dict, order: list[str], site: dict) -> str:
@@ -383,6 +413,7 @@ def render_article(a: dict, arts: dict, order: list[str], site: dict) -> str:
     <div class="narrow prose">
 {render_blocks(a, site, p)}
     </div>
+    {bot_aside(a, site)}
     <div class="narrow">
       <div class="article-foot">
         <button class="btn" type="button" data-copy-link><i class="ph ph-link-simple" aria-hidden="true"></i><span>Скопировать ссылку</span></button>
@@ -413,6 +444,7 @@ def render_about(arts: dict, site: dict) -> str:
       <h1 style="font-size:clamp(2.25rem,5vw,3.75rem);line-height:1.04;margin:0">О проекте</h1>
       <p>{e("«Канон»: развлекательное издание о луксмаксинге, трендах, привычках и спорах вокруг внешности.")}</p>
       <p>{e("Новости на сайте придуманы редакцией. Люди, клиники, студии и приложения в них вымышлены, любые совпадения случайны. Единственный материал с настоящими данными: эксперимент, в котором мы оценили 22 античные головы алгоритмом Telegram-бота I WANNA MOG YOU.")}</p>
+      {f'<p>{e("Оценить собственное лицо тем же алгоритмом можно в боте")} <a href="{attr(BOT["url"])}" target="_blank" rel="noopener">{e(BOT["handle"])}</a>.</p>' if BOT else ''}
       <p>{e("Мы не даём медицинских советов. Если вас беспокоит здоровье, кожа или зубы, обратитесь к врачу. Если мысли о внешности мешают жить, поговорите с близкими или психологом.")}</p>
       <h2>Откуда фотографии</h2>
       <p>{e("Все изображения скульптур взяты из открытой коллекции музея Метрополитен (The Met Open Access) и переданы в общественное достояние по лицензии CC0.")}</p>
@@ -463,8 +495,9 @@ def check_text(name: str, text: str) -> None:
 
 
 def main() -> None:
-    global SITE_URL
+    global SITE_URL, BOT
     site = json.loads((CONTENT / "site.json").read_text(encoding="utf-8"))
+    BOT = site.get("bot") or {}
     SITE_URL = (os.environ.get("SITE_URL") or site.get("url") or "").rstrip("/")
     data = json.loads((CONTENT / "articles.json").read_text(encoding="utf-8"))
     arts = {a["slug"]: a for a in data["articles"]}
