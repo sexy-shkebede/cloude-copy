@@ -25,21 +25,22 @@ CREAM = (255, 230, 200)  # светлые вспомогательные лин�
 RED = (255, 64, 64)
 
 
-WEIGHTS = {"regular": 450, "semibold": 600, "bold": 760, "display": 880}
+# Статические начертания Montserrat (не зависят от поддержки вариативных шрифтов в FreeType)
+FONT_FILES = {
+    "regular": "Montserrat-Regular.ttf",
+    "semibold": "Montserrat-SemiBold.ttf",
+    "bold": "Montserrat-Bold.ttf",
+    "display": "Montserrat-Display.ttf",  # жирный, как заголовок баннера
+}
 
 
 @lru_cache(maxsize=64)
 def font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont:
-    """weight: regular | semibold | bold | display (жирный, как заголовок баннера)."""
+    """weight: regular | semibold | bold | display."""
     try:
-        f = ImageFont.truetype(str(FONTS_DIR / "Montserrat-Variable.ttf"), size)
+        return ImageFont.truetype(str(FONTS_DIR / FONT_FILES.get(weight, FONT_FILES["regular"])), size)
     except OSError:
         return ImageFont.load_default()
-    try:
-        f.set_variation_by_axes([WEIGHTS.get(weight, 450)])
-    except Exception:  # FreeType без поддержки вариативных шрифтов — останется обычное начертание
-        pass
-    return f
 
 
 def score_color(score: float) -> tuple[int, int, int]:

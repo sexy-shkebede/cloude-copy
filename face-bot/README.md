@@ -127,5 +127,5 @@ python selftest.py анфас.jpg профиль.jpg m     # m — мужчин�
 
 Детектор YuNet — из [opencv_zoo](https://github.com/opencv/opencv_zoo) (MIT), каскад Хаара — из OpenCV,
 модель LBF скачивается из репозитория [kurnianggoro/GSOC2017](https://github.com/kurnianggoro/GSOC2017)
-(Google Summer of Code 2017 для OpenCV). Шрифт Montserrat — SIL Open Font License
+(Google Summer of Code 2017 для OpenCV). Шрифт Montserrat (статические начертания, урезанные до латиницы и кириллицы) — SIL Open Font License
 (текст лицензии в `assets/fonts/`).

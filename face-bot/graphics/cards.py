@@ -79,11 +79,11 @@ def _bullets(d: ImageDraw.ImageDraw, xy, items: list[str], f, max_w: int, gap: i
     return y
 
 
-def _title(d: ImageDraw.ImageDraw, xy, text: str, size: int, max_w: int, fill=TEXT) -> int:
-    """Крупный заголовок с переносом по словам; уменьшает шрифт, если слово не влезает."""
+def _title(d: ImageDraw.ImageDraw, xy, text: str, size: int, max_w: int, fill=TEXT, max_lines: int = 2) -> int:
+    """Крупный заголовок с переносом по словам; уменьшает шрифт, пока он не влезет в max_lines строк."""
     f = font(size, "display")
     lines = wrap(d, text, f, max_w)
-    while size > 30 and any(text_size(d, ln, f)[0] > max_w for ln in lines):
+    while size > 30 and (len(lines) > max_lines or any(text_size(d, ln, f)[0] > max_w for ln in lines)):
         size -= 6
         f = font(size, "display")
         lines = wrap(d, text, f, max_w)
@@ -114,7 +114,7 @@ def render_banner(brand: str, price: int) -> bytes:
     d.text((74, y + 10), "ИИ-анализ внешности", font=font(40, "bold"), fill=GOLD)
     y = _bullets(d, (76, y + 86), ["68 точек разметки лица", "Профиль под углом 90°", "Баллы по каждой части лица",
                                    "Итоговая оценка и советы"], font(32, "semibold"), 620, gap=6)
-    _price_pill(d, (74, min(h - 100, y + 22)), price)
+    _price_pill(d, (74, y + 22), price)
     return to_jpeg(img)
 
 
@@ -276,11 +276,20 @@ def render_balance(balance: int, price: int, unlimited: bool = False) -> bytes:
     d = ImageDraw.Draw(img, "RGBA")
     d.text((70, 60), "ТВОЙ БАЛАНС", font=font(40, "display"), fill=MUTED)
     value = "∞" if unlimited else str(balance)
-    big = font(200, "display")
-    d.text((64, 96), value, font=big, fill=GOLD)
-    vw, _ = text_size(d, value, big)
-    d.text((100 + vw, 250), _plural(balance, ("оценка", "оценки", "оценок")) if not unlimited else "оценок",
-           font=font(48, "bold"), fill=TEXT)
+    unit = "оценок" if unlimited else _plural(balance, ("оценка", "оценки", "оценок"))
+    size = 200
+    big = font(size, "display")
+    while size > 90 and d.textlength(value, font=big) + 36 + d.textlength(unit, font=font(48, "bold")) > 720:
+        size -= 10  # большое число не должно наезжать на звёзды справа
+        big = font(size, "display")
+    base_y = 300  # общая базовая линия числа и подписи
+    d.text((64, base_y), value, font=big, fill=GOLD, anchor="ls")
+    vw = d.textlength(value, font=big)
+    if unlimited:  # у знака ∞ нет высоты цифр — центрируем подпись по самому знаку
+        l, t, r, b = d.textbbox((64, base_y), value, font=big, anchor="ls")
+        d.text((100 + vw, (t + b) / 2), unit, font=font(48, "bold"), fill=TEXT, anchor="lm")
+    else:
+        d.text((100 + vw, base_y), unit, font=font(48, "bold"), fill=TEXT, anchor="ls")
     _price_pill(d, (70, 420), price)
     # декоративные звёзды с тёплым свечением
     stars = ((1010, 200, 110, 255), (1170, 120, 46, 210), (1150, 390, 64, 230), (880, 420, 34, 180))

@@ -48,7 +48,11 @@ def _frame(photo: Image.Image, title: str, subtitle: str, badge: tuple[str, floa
         tw, _ = text_size(d, text, f)
         if x + 46 + tw > w - 20:
             x, y = 32, y + 42
-        d.line([(x, y + 13), (x + 34, y + 13)], fill=color, width=5)
+        if len(color) == 4 and color[3] == "dashed":  # пунктир — как сама линия на фото
+            for sx in (x, x + 14, x + 28):
+                d.line([(sx, y + 13), (sx + 8, y + 13)], fill=color[:3], width=5)
+        else:
+            d.line([(x, y + 13), (x + 34, y + 13)], fill=color, width=5)
         d.text((x + 44, y), text, font=f, fill=TEXT)
         x += 44 + tw + 34
     return canvas, d
@@ -182,22 +186,22 @@ def render_profile(profile: ProfileResult, report: Report) -> bytes:
     cont = cont[(cont[:, 1] > lo) & (cont[:, 1] < hi)]
 
     n = Neon(photo.size)
-    n.line(cont, ORANGE, 3.2)
+    n.line(cont, ORANGE, 2.6, 170)  # контур — фоновая линия, измерения ярче
     # E-линия Рикеттса
     e = Q["Pog"] - Q["Prn"]
     n.dashed(Q["Prn"] - 0.18 * e, Q["Pog"] + 0.25 * e, GOLD, 2.4, 14, 8)
     # выпуклость: G–Sn–Pog
     n.line([Q["G"], Q["Sn"], Q["Pog"]], FLAME, 2.4, 230)
     # лоб–нос
-    n.line([Q["G"], Q["N"], Q["Prn"]], CREAM, 2.4, 230)
+    n.line([Q["G"], Q["N"], Q["Prn"]], GOLD, 2.4, 235)
     # носогубный
     if "Cm" in Q:
         v = Q["Cm"] - Q["Sn"]
-        n.line([Q["Sn"] + v * 1.6, Q["Sn"], Q["Ls"]], AMBER, 2.4, 230)
+        n.line([Q["Sn"] + v * 1.6, Q["Sn"], Q["Ls"]], CREAM, 2.6, 245)
     r_arc = 0.11 * scale * k
-    bis_nf = _arc_between(n, Q["N"], Q["G"], Q["Prn"], r_arc, CREAM)
+    bis_nf = _arc_between(n, Q["N"], Q["G"], Q["Prn"], r_arc, GOLD)
     bis_cv = _arc_between(n, Q["Sn"], Q["G"], Q["Pog"], r_arc * 1.3, FLAME)
-    bis_nl = _arc_between(n, Q["Sn"], Q["Cm"], Q["Ls"], r_arc * 0.8, AMBER) if "Cm" in Q else None
+    bis_nl = _arc_between(n, Q["Sn"], Q["Cm"], Q["Ls"], r_arc * 0.8, CREAM) if "Cm" in Q else None
     for name in ("G", "N", "Prn", "Sn", "Ls", "Li", "Pog"):
         n.dot(Q[name], 6, CREAM)
         n.ring(Q[name], 10, ORANGE, 2)
@@ -211,10 +215,10 @@ def render_profile(profile: ProfileResult, report: Report) -> bytes:
         pos = (o[0] + math.cos(bis) * dist, o[1] + math.sin(bis) * dist)
         pill(d, pos, text, fs, fg=BG, bg=(*color, 235), pad=(9, 5), anchor="mm", clamp=photo.size)
 
-    label_at(Q["N"], bis_nf + math.pi, 0.2 * scale * k, f"{m['nasofrontal']:.0f}°", CREAM)
+    label_at(Q["N"], bis_nf + math.pi, 0.2 * scale * k, f"{m['nasofrontal']:.0f}°", GOLD)
     label_at(Q["Sn"], bis_cv + math.pi, 0.24 * scale * k, f"{m['convexity']:.0f}°", FLAME)
     if bis_nl is not None:
-        label_at(Q["Sn"], bis_nl, 0.2 * scale * k, f"{m['nasolabial']:.0f}°", AMBER)
+        label_at(Q["Sn"], bis_nl, 0.2 * scale * k, f"{m['nasolabial']:.0f}°", CREAM)
     ex = Q["Pog"] + 0.3 * e
     pill(d, (ex[0], ex[1]), f"E-линия {m['eline_li']:+.0f} мм", font(19, "bold"), fg=BG,
          bg=(*GOLD, 235), pad=(9, 5), anchor="mt", clamp=photo.size)
@@ -222,6 +226,6 @@ def render_profile(profile: ProfileResult, report: Report) -> bytes:
     part = next((pt for pt in report.parts if pt.key == "profile"), None)
     canvas, _ = _frame(
         photo, "ПРОФИЛЬ 90°", "углы профиля • E-линия Рикеттса", ("ПРОФИЛЬ", part.score) if part else None,
-        [(CREAM, "лоб–нос"), (AMBER, "носогубный"), (FLAME, "выпуклость"), (GOLD, "E-линия")],
+        [(GOLD, "лоб–нос"), (CREAM, "носогубный"), (FLAME, "выпуклость"), ((*GOLD, "dashed"), "E-линия")],
     )
     return to_jpeg(canvas)
