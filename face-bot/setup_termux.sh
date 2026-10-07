@@ -17,13 +17,13 @@ pkg install -y python-numpy python-pillow opencv-python
 echo "==> Ставлю python-telegram-bot"
 pip install -r requirements.txt
 
-echo "==> Скачиваю модели (~55 МБ)"
+echo "==> Скачиваю модели (~20 МБ)"
 python download_models.py
 
 python - <<'EOF'
 import cv2, numpy, PIL
-assert hasattr(cv2, "face"), "в OpenCV нет модуля face (contrib)"
-assert hasattr(cv2, "FaceDetectorYN"), "OpenCV слишком старый, нужен 4.6+"
+assert hasattr(cv2, "FaceDetectorYN"), "OpenCV слишком старый, нужен 4.8+"
+net = cv2.dnn.readNetFromONNX("models/face_landmarks.onnx")  # проверка, что нейросети запускаются
 print("OpenCV", cv2.__version__, "| NumPy", numpy.__version__, "| Pillow", PIL.__version__, "— OK")
 EOF
 

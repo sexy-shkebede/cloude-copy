@@ -1,4 +1,4 @@
-"""Анализ фото анфас: 68 точек, линия роста волос и замеры пропорций."""
+"""Анализ фото анфас: 478 точек Face Mesh (из них — привычные 68), линия роста волос и замеры пропорций."""
 from __future__ import annotations
 
 import math
@@ -26,8 +26,42 @@ CANON_SCALE = 3.0
 CANON_OFFSET = np.array([72.0, 150.0], np.float32)
 CANON_SIZE = (480, 600)  # (w, h)
 CANON_TEMPLATE = _TEMPLATE * CANON_SCALE + CANON_OFFSET
-# Несколько стартовых рамок для LBF (в единицах шаблона) — медиана сглаживает ошибки
-_FIT_BOXES = [(11, 25, 101, 115), (13, 23, 99, 117), (9, 27, 103, 113), (12, 21, 100, 113), (10, 28, 102, 118)]
+# Стартовый кадр для Face Mesh в нормализованном кадре; дальше он уточняется по найденным точкам
+MESH_START = ((240.0, 345.0), 400.0)
+MIN_MESH_CONF = 0.5
+
+# Соответствие 68 классических точек (схема iBUG/dlib) точкам MediaPipe Face Mesh.
+# Овал лица Face Mesh идёт по настоящему краю лица, поэтому скулы и челюсть меряются по силуэту,
+# а не по «средней» форме, к которой тянулась старая модель LBF.
+MESH68 = [
+    127, 234, 93, 132, 58, 136, 149, 176, 152, 400, 378, 365, 288, 361, 323, 454, 356,  # овал 0-16 (см. JAW_WEIGHTS)
+    70, 63, 105, 66, 107, 336, 296, 334, 293, 300,  # брови 17-26 (уточняются ниже)
+    168, 197, 5, 4, 98, 97, 2, 326, 327,  # нос 27-35
+    33, 160, 158, 133, 153, 144, 362, 385, 387, 263, 373, 380,  # глаза 36-47
+    61, 39, 37, 0, 267, 269, 291, 405, 314, 17, 84, 181,  # губы снаружи 48-59
+    78, 82, 13, 312, 308, 317, 14, 87,  # губы внутри 60-67
+]
+# Овал 0-16: точки iBUG стоят на контуре между точками Face Mesh — берём взвешенные пары.
+# Веса подобраны по разметке 300W: ошибка контура 8.1% против 11.4% у ближайших точек сетки.
+JAW_WEIGHTS = [
+    {127: 1.0}, {93: 0.5, 234: 0.5}, {132: 0.75, 93: 0.25}, {58: 0.75, 132: 0.25}, {172: 1.0},
+    {150: 0.5, 136: 0.5}, {149: 0.75, 176: 0.25}, {148: 0.75, 176: 0.25}, {152: 1.0},
+    {377: 0.75, 400: 0.25}, {378: 0.75, 400: 0.25}, {379: 0.5, 365: 0.5}, {397: 1.0},
+    {288: 0.75, 361: 0.25}, {361: 0.75, 323: 0.25}, {323: 0.5, 454: 0.5}, {356: 1.0},
+]
+# Брови: середина между верхним и нижним краем (как у точек 17-26 в схеме iBUG)
+BROW_UPPER = [70, 63, 105, 66, 107, 336, 296, 334, 293, 300]
+BROW_LOWER = [46, 53, 52, 65, 55, 285, 295, 282, 283, 276]
+# Скулы: самая широкая пара точек овала между глазами и низом носа (бизигоматическая ширина)
+ZYGION_PAIRS = [(234, 454), (93, 323)]
+
+
+def mesh_to_68(mesh: np.ndarray) -> np.ndarray:
+    p = mesh[MESH68, :2].astype(np.float32).copy()
+    for j, weights in enumerate(JAW_WEIGHTS):
+        p[j] = sum(mesh[k, :2] * w for k, w in weights.items())
+    p[17:27] = (mesh[BROW_UPPER, :2] + mesh[BROW_LOWER, :2]) / 2
+    return p
 
 # Пары симметричных точек (левая/правая сторона)
 SYMMETRY_PAIRS = [
@@ -50,6 +84,7 @@ class FrontalResult:
     src_ipd: float  # межзрачковое расстояние на исходном фото, px
     m: dict = field(default_factory=dict)  # замеры
     warnings: list[str] = field(default_factory=list)
+    mesh: np.ndarray | None = None  # 478x3 точек Face Mesh в нормализованном кадре
 
 
 def _dist(a: np.ndarray, b: np.ndarray) -> float:
@@ -164,23 +199,13 @@ def analyze_front(data: bytes) -> FrontalResult:
     if M is None:
         raise AnalysisError("no_face")
     canon = cv2.warpAffine(img, M, CANON_SIZE, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    boxes = []
-    for x0, y0, x1, y1 in _FIT_BOXES:
-        boxes.append(
-            (
-                x0 * CANON_SCALE + CANON_OFFSET[0],
-                y0 * CANON_SCALE + CANON_OFFSET[1],
-                (x1 - x0) * CANON_SCALE,
-                (y1 - y0) * CANON_SCALE,
-            )
-        )
-    fits = models.fit_landmarks(canon, boxes)
-    if len(fits) == 0:
+    mesh, conf = models.mesh_refined(canon, *MESH_START)
+    if conf < MIN_MESH_CONF:
         raise AnalysisError("no_landmarks")
-    p = np.median(fits, axis=0)
+    p = mesh_to_68(mesh)
 
     midline = _fit_midline(p)
-    m = measure_front(p, midline)
+    m = measure_front(p, midline, mesh)
     hairline = _detect_hairline(canon, p, midline, m["ipd"])
     if hairline is not None:
         up = m["brow_y"] - hairline
@@ -206,10 +231,11 @@ def analyze_front(data: bytes) -> FrontalResult:
         src_ipd=src_ipd,
         m=m,
         warnings=warnings,
+        mesh=mesh,
     )
 
 
-def measure_front(p: np.ndarray, midline) -> dict:
+def measure_front(p: np.ndarray, midline, mesh: np.ndarray | None = None) -> dict:
     eye_r, eye_l = p[36:42].mean(0), p[42:48].mean(0)
     ipd = _dist(eye_r, eye_l)
     ew_r, ew_l = _dist(p[36], p[39]), _dist(p[42], p[45])
@@ -217,6 +243,8 @@ def measure_front(p: np.ndarray, midline) -> dict:
     icd = _dist(p[39], p[42])
     temple_w = _dist(p[0], p[16])
     cheek_w = _dist(p[1], p[15])
+    if mesh is not None:  # скулы — по самой широкой части овала, а не по одной паре точек
+        cheek_w = max(_dist(mesh[a, :2], mesh[b, :2]) for a, b in ZYGION_PAIRS)
     jaw_w = _dist(p[4], p[12])
     chin_w = _dist(p[6], p[10])
     nose_w = _dist(p[31], p[35])

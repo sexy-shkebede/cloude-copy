@@ -2,6 +2,8 @@
 data/
 selftest_out/
 models/lbfmodel.yaml
+models/face_landmarks.onnx
+models/tddfa_*
 models/*.part
 __pycache__/
 *.pyc

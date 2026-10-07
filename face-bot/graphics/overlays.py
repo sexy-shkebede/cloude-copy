@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
-from analyzer.frontal import CANON_SIZE, CANON_TEMPLATE, FrontalResult, _midline_x
+from analyzer.frontal import CANON_SIZE, CANON_TEMPLATE, ZYGION_PAIRS, FrontalResult, _midline_x
 from analyzer.profile import ProfileResult
 from analyzer.scoring import Report
 
@@ -108,11 +108,16 @@ def render_front(front: FrontalResult, report: Report) -> bytes:
         pa, pb = p[a], p[b]
         v = pb - pa
         n.line([pa - 0.35 * v, pb + 0.25 * v], GOLD, 2.2, 240)
-    # ширина скул и челюсти
-    for a, b, col in ((1, 15, FLAME), (4, 12, FLAME)):
-        n.line([p[a], p[b]], col, 2.0, 200)
-        for q in (p[a], p[b]):
-            n.dot(q, 4.5, col)
+    # ширина скул (там, где её мерили: самая широкая пара точек овала Face Mesh) и челюсти
+    cheek = (p[1], p[15])
+    if front.mesh is not None:
+        mesh = front.mesh[:, :2] * f - np.array([0, y0], np.float32)
+        a, b = max(ZYGION_PAIRS, key=lambda ab: float(np.linalg.norm(mesh[ab[0]] - mesh[ab[1]])))
+        cheek = (mesh[a], mesh[b])
+    for qa, qb in (cheek, (p[4], p[12])):
+        n.line([qa, qb], FLAME, 2.0, 200)
+        for q in (qa, qb):
+            n.dot(q, 4.5, FLAME)
     for q in p:
         n.dot(q, 2.6, CREAM)
     photo = n.render_onto(photo, glow=5)

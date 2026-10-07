@@ -80,8 +80,10 @@ MIGRATIONS = {
         "side_file_id": "TEXT",
         "card_file_id": "TEXT",
         "excluded": "INTEGER NOT NULL DEFAULT 0",
+        "scale": "INTEGER NOT NULL DEFAULT 1",  # версия шкалы баллов (1 — до калибровки)
     },
 }
+SCALE_VERSION = 2  # текущая шкала: 5 — типичное лицо
 
 INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_users_clan ON users(clan_id);
@@ -120,7 +122,8 @@ def _now() -> str:
 
 
 class Database:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, rescale=None) -> None:
+        """rescale — функция перевода старых оценок (до калибровки шкалы) в текущую шкалу."""
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -128,6 +131,8 @@ class Database:
         with self.lock, self.conn:
             self.conn.executescript(SCHEMA)
             self._migrate()
+            if rescale is not None:
+                self._rescale_legacy(rescale)
 
     def _migrate(self) -> None:
         for table, columns in MIGRATIONS.items():
@@ -148,6 +153,24 @@ class Database:
             "AND r.excluded = 0 ORDER BY r.score DESC, r.id ASC LIMIT 1) "
             "WHERE best_rating_id IS NULL AND best_score IS NOT NULL"
         )
+
+    def _rescale_legacy(self, rescale) -> None:
+        """Старые оценки ставились по завышенной шкале: переводим их в текущую, чтобы топ был честным."""
+        rows = self.conn.execute("SELECT id, user_id, score FROM ratings WHERE scale < ?", (SCALE_VERSION,)).fetchall()
+        if not rows:
+            return
+        for r in rows:
+            self.conn.execute("UPDATE ratings SET score=?, scale=? WHERE id=?",
+                              (float(rescale(float(r["score"]))), SCALE_VERSION, r["id"]))
+        for uid in {int(r["user_id"]) for r in rows}:
+            best = self.conn.execute(
+                "SELECT id, score FROM ratings WHERE user_id=? AND excluded=0 ORDER BY score DESC, id ASC LIMIT 1", (uid,)
+            ).fetchone()
+            last = self.conn.execute("SELECT score FROM ratings WHERE user_id=? ORDER BY id DESC LIMIT 1", (uid,)).fetchone()
+            self.conn.execute(
+                "UPDATE users SET best_score=?, best_rating_id=?, last_score=? WHERE id=?",
+                (best["score"] if best else None, best["id"] if best else None, last["score"] if last else None, uid),
+            )
 
     # ---------- пользователи ----------
     def upsert_user(self, user_id: int, username: str | None, first_name: str | None, bonus: int = 0) -> tuple[sqlite3.Row, bool]:
@@ -260,9 +283,10 @@ class Database:
         with self.lock, self.conn:
             prev = self.conn.execute("SELECT best_score FROM users WHERE id=?", (user_id,)).fetchone()
             rid = self.conn.execute(
-                "INSERT INTO ratings(user_id, score, parts, paid, gender, details, created_at) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO ratings(user_id, score, parts, paid, gender, details, scale, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
                 (user_id, score, json.dumps(parts, ensure_ascii=False), int(paid), gender,
-                 json.dumps(details, ensure_ascii=False) if details is not None else None, now),
+                 json.dumps(details, ensure_ascii=False) if details is not None else None, SCALE_VERSION, now),
             ).lastrowid
             # личный рекорд меняется только при строго большем балле: при равенстве в топе остаётся более ранний
             record = prev is None or prev["best_score"] is None or score > prev["best_score"]

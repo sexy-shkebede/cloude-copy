@@ -37,6 +37,7 @@ from telegram.ext import (
 import config
 import texts
 from analyzer import FEMALE, MALE, AnalysisError, analyze_front, analyze_profile, build_report, get_models
+from analyzer.scoring import legacy_total_to_current
 from database import Database, clan_key
 from graphics.boards import HEADERS, render_header
 from graphics.cards import render_balance, render_banner, render_result_card, render_step_front, render_step_profile
@@ -47,7 +48,7 @@ HTML = ParseMode.HTML
 MAX_FILE_SIZE = 20 * 1024 * 1024
 SESSION_TTL = 30 * 60  # незавершённая оценка хранится в памяти 30 минут
 
-db = Database(config.DB_PATH)
+db = Database(config.DB_PATH, rescale=legacy_total_to_current)  # старые оценки переводятся в новую шкалу
 analysis_sem = asyncio.Semaphore(config.ANALYSIS_WORKERS)
 file_ids: dict[str, str] = {}  # кэш file_id статичных картинок, чтобы не загружать их повторно
 

@@ -44,8 +44,8 @@ def font(size: int, weight: str = "regular") -> ImageFont.FreeTypeFont:
 
 
 def score_color(score: float) -> tuple[int, int, int]:
-    """Красный (низко) → оранжевый → золотой (высоко) по шкале 0..10."""
-    stops = [(0.0, RED), (5.0, RED), (6.5, ORANGE), (8.0, GOLD), (10.0, (255, 240, 150))]
+    """Красный (низко) → оранжевый (типично, 5) → золотой (высоко) по шкале 0..10."""
+    stops = [(0.0, RED), (3.0, RED), (5.0, ORANGE), (7.0, GOLD), (10.0, (255, 240, 150))]
     s = max(0.0, min(10.0, score))
     for (a, ca), (b, cb) in zip(stops, stops[1:]):
         if s <= b:

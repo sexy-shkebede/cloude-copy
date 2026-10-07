@@ -1,8 +1,12 @@
 """Анализ фото в профиль (90°): контур лица и углы профиля.
 
-Лицо находится детектором, фон отделяется GrabCut, затем по каждой строке
-берётся крайняя передняя точка силуэта — это линия профиля. На ней ищутся
-глабелла, переносица, кончик носа, подносовая точка, губы и подбородок.
+1. Детектор находит лицо, 3D-модель головы (3DDFA_V2) ставит 68 точек и оценивает поворот головы.
+   По ней понятно, правда ли это профиль, в какую сторону смотрит лицо и где примерно нос, губы и подбородок.
+2. Фон отделяется от головы (быстрая модель однотонного фона или GrabCut), по каждой строке берётся
+   крайняя передняя точка силуэта — это линия профиля.
+3. Точки профиля (глабелла, переносица, кончик носа, основание носа, губы, подбородок) ищутся на линии
+   профиля только рядом с тем местом, где их видит 3D-модель. Поэтому подбородок не может «уехать»
+   к уху или в волосы, а при сбое силуэта используются точки самой 3D-модели.
 """
 from __future__ import annotations
 
@@ -28,6 +32,9 @@ POINT_NAMES = {
     "C": "Шея",
 }
 
+MIN_PROFILE_YAW = 50.0  # меньше — это ракурс 3/4, углы профиля по нему считать нельзя
+FRONTAL_YAW = 25.0  # меньше — человек смотрит в камеру
+
 
 @dataclass
 class ProfileResult:
@@ -38,6 +45,8 @@ class ProfileResult:
     face_box: tuple[float, float, float, float]  # в координатах исходного фото
     m: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    head: np.ndarray | None = None  # 68x3 точек 3D-модели головы (координаты исходного фото)
+    yaw: float = 0.0
 
 
 def _angle_at(a: np.ndarray, o: np.ndarray, b: np.ndarray) -> float:
@@ -54,53 +63,6 @@ def _signed_dist_to_line(p: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
     if n[0] < 0:
         n = -n
     return float((p - a) @ n)
-
-
-def _find_face(img: np.ndarray):
-    """Возвращает (бокс, глаз_y, рот_y, смотрит_вправо) или None."""
-    models = get_models()
-    faces = models.detect_faces(img, 0.5)
-    if len(faces):
-        f = faces[0]
-        x, y, w, h = map(float, f[:4])
-        pts = f[4:14].reshape(5, 2)
-        eyes = pts[:2]
-        nose = pts[2]
-        mouth = pts[3:5]
-        # насколько нос вынесен вперёд относительно глаз — признак профиля
-        offset = float(nose[0] - eyes[:, 0].mean()) / w
-        eye_gap = abs(float(eyes[0, 0] - eyes[1, 0])) / w
-        return {
-            "box": (x, y, w, h),
-            "eye_y": float(eyes[:, 1].mean()),
-            "mouth_y": float(mouth[:, 1].mean()),
-            "right": offset > 0,
-            "offset": abs(offset),
-            "eye_gap": eye_gap,
-            "source": "yunet",
-        }
-    gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
-    W = gray.shape[1]
-    cands = []
-    for flip in (False, True):
-        g = cv2.flip(gray, 1) if flip else gray
-        for x, y, w, h in models.detect_profile_haar(g):
-            if flip:
-                x = W - x - w
-            # каскад обучен на лицах, смотрящих влево
-            cands.append(((x, y, w, h), flip))
-    if not cands:
-        return None
-    (x, y, w, h), flip = max(cands, key=lambda c: c[0][2] * c[0][3])
-    return {
-        "box": (float(x), float(y), float(w), float(h)),
-        "eye_y": y + 0.42 * h,
-        "mouth_y": y + 0.80 * h,
-        "right": flip,
-        "offset": 0.3,
-        "eye_gap": 0.0,
-        "source": "haar",
-    }
 
 
 def _scan_bg(small: np.ndarray, front: int, strip: int) -> np.ndarray | None:
@@ -213,84 +175,183 @@ def _argext(contour: np.ndarray, y0: float, y1: float, mode: str):
     return contour[i].copy()
 
 
-def _contour_points(contour: np.ndarray, eye_y: float, mouth_y: float, face_h: float) -> dict | None:
-    """Ищет антропометрические точки на линии профиля. None — если профиль неправдоподобный."""
-    P: dict = {}
+def _detect_box(img: np.ndarray) -> tuple[tuple[float, float, float, float], str] | None:
+    """Бокс лица: YuNet, а если он не видит лицо сбоку — каскад Хаара для профиля (в обе стороны)."""
+    models = get_models()
+    faces = models.detect_faces(img, 0.5)
+    if len(faces):
+        x, y, w, h = map(float, faces[0][:4])
+        return (x, y, w, h), "yunet"
+    gray = cv2.equalizeHist(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+    W = gray.shape[1]
+    cands = []
+    for flip in (False, True):
+        g = cv2.flip(gray, 1) if flip else gray
+        for x, y, w, h in models.detect_profile_haar(g):
+            if flip:
+                x = W - x - w
+            cands.append((x, y, w, h))
+    if not cands:
+        return None
+    x, y, w, h = max(cands, key=lambda c: c[2] * c[3])
+    return (float(x), float(y), float(w), float(h)), "haar"
 
-    def find(name, y0, y1, mode):
-        P[name] = _argext(contour, y0, y1, mode)
+
+def _fit_head(img: np.ndarray, box) -> tuple[np.ndarray, dict]:
+    """Два прохода 3DDFA: по боксу детектора, затем по собственным точкам (кадр точнее)."""
+    models = get_models()
+    pts, pose = models.head3d(img, models.roi_from_box(box))
+    pts, pose = models.head3d(img, models.roi_from_points(pts))
+    return pts, pose
+
+
+# Точки средней линии лица в схеме 68 точек: в профиль они лежат прямо на силуэте
+def _priors(h: np.ndarray) -> dict:
+    """Примерные положения точек профиля по 3D-модели (лицо смотрит вправо)."""
+    pr = {
+        "G": (h[21, :2] + h[22, :2]) / 2,
+        "N": h[27, :2],
+        "Prn": h[30, :2],
+        "Sn": h[33, :2],
+        "Ls": h[51, :2],
+        "St": (h[62, :2] + h[66, :2]) / 2,
+        "Li": h[57, :2],
+        "Pog": h[8, :2] + 0.25 * (h[57, :2] - h[8, :2]),  # подбородок чуть выше нижней точки (ментона)
+    }
+    pr["B"] = (pr["Li"] + pr["Pog"]) / 2
+    return {k: np.asarray(v, np.float32) for k, v in pr.items()}
+
+
+def _contour_points(contour: np.ndarray, pr: dict, scale: float) -> dict | None:
+    """Ищет точки на линии профиля в окрестности примерных положений от 3D-модели.
+    None — если силуэт не совпадает с 3D-моделью (поймали волосы, ухо, фон) или профиль неправдоподобный."""
+    P: dict = {}
+    tol = 0.07 * scale  # окно поиска по высоте вокруг точки 3D-модели
+
+    def find(name, lo, hi, mode):
+        P[name] = _argext(contour, lo, hi, mode)
         return P[name] is not None
 
-    if not find("Prn", eye_y + 0.12 * face_h, eye_y + 0.75 * max(mouth_y - eye_y, 0.3 * face_h), "max"):
-        return None
-    prn_y = P["Prn"][1]
-    if not (
-        find("Sn", prn_y + 0.02 * face_h, prn_y + 0.6 * max(mouth_y - prn_y, 0.1 * face_h), "min")
-        and find("N", eye_y - 0.15 * face_h, eye_y + 0.08 * face_h, "min")
-        and find("G", P["N"][1] - 0.3 * face_h, P["N"][1] - 0.04 * face_h, "max")
-        and find("Ls", P["Sn"][1] + 0.01 * face_h, mouth_y + 0.04 * face_h, "max")
-        and find("St", P["Ls"][1] + 0.01 * face_h, P["Ls"][1] + 0.14 * face_h, "min")
-        and find("Li", P["St"][1] + 0.01 * face_h, P["St"][1] + 0.16 * face_h, "max")
-        and find("B", P["Li"][1] + 0.02 * face_h, P["Li"][1] + 0.22 * face_h, "min")
-        and find("Pog", P["B"][1] + 0.02 * face_h, P["B"][1] + 0.28 * face_h, "max")
-    ):
-        return None
-    find("C", P["Pog"][1] + 0.12 * face_h, P["Pog"][1] + 0.45 * face_h, "min")
+    def around(name, lo_bound=None, hi_bound=None, k=1.0):
+        y = float(pr[name][1])
+        lo, hi = y - tol * k, y + tol * k
+        if lo_bound is not None:
+            lo = max(lo, lo_bound)
+        if hi_bound is not None:
+            hi = min(hi, hi_bound)
+        return lo, hi
 
-    # проверки правдоподобия
+    ok = (
+        find("Prn", *around("Prn", k=1.3), "max")
+        and find("N", *around("N", hi_bound=P["Prn"][1] - 0.05 * scale, k=1.3), "min")
+        and find("G", *around("G", hi_bound=P["N"][1] - 0.02 * scale, k=1.5), "max")
+        and find("Sn", *around("Sn", lo_bound=P["Prn"][1] + 0.01 * scale), "min")
+        and find("Ls", *around("Ls", lo_bound=P["Sn"][1] + 0.01 * scale), "max")
+        and find("St", *around("St", lo_bound=P["Ls"][1] + 0.005 * scale), "min")
+        and find("Li", *around("Li", lo_bound=P["St"][1] + 0.005 * scale), "max")
+        and find("B", *around("B", lo_bound=P["Li"][1] + 0.01 * scale), "min")
+        and find("Pog", *around("Pog", lo_bound=P["B"][1] + 0.01 * scale, k=1.5), "max")
+    )
+    if not ok:
+        return None
+    find("C", P["Pog"][1] + 0.12 * scale, P["Pog"][1] + 0.45 * scale, "min")
+
+    # силуэт должен проходить рядом с 3D-моделью: иначе это волосы, ухо или фон
+    for name, limit in (("Prn", 0.12), ("N", 0.15), ("Ls", 0.15), ("Pog", 0.2)):
+        if abs(float(P[name][0] - pr[name][0])) > limit * scale:
+            return None
+    return P if _plausible(P) else None
+
+
+def _plausible(P: dict) -> bool:
     scale = float(np.linalg.norm(P["N"] - P["Pog"]))
     if scale < 30:
-        return None
+        return False
     order = ["G", "N", "Prn", "Sn", "Ls", "St", "Li", "B", "Pog"]
     if any(P[a][1] >= P[b][1] for a, b in zip(order, order[1:])):
-        return None
+        return False
     if (P["Prn"][0] - P["Sn"][0]) < 0.05 * scale or (P["Prn"][0] - P["N"][0]) < 0.07 * scale:
-        return None
-    if (P["Ls"][0] - P["Sn"][0]) < 0.0 or (P["Pog"][0] - P["B"][0]) < 0.0:
-        return None
-    # анатомически невозможные углы — признак того, что это не профиль (например, ракурс 3/4)
+        return False
+    if (P["Ls"][0] - P["Sn"][0]) < -0.02 * scale or (P["Pog"][0] - P["B"][0]) < -0.02 * scale:
+        return False
     convexity = _angle_at(P["G"], P["Sn"], P["Pog"])
     nasofrontal = _angle_at(P["G"], P["N"], P["Prn"])
     projection = _signed_dist_to_line(P["Prn"], P["N"], P["Sn"]) / scale
-    if not (145 <= convexity and 95 <= nasofrontal <= 165 and 0.05 <= projection <= 0.35):
-        return None
-    return P
+    return 140 <= convexity and 95 <= nasofrontal <= 170 and 0.04 <= projection <= 0.35
+
+
+def _model_contour(h: np.ndarray) -> np.ndarray:
+    """Запасная линия профиля прямо по средней линии 3D-модели (если силуэт выделить не удалось)."""
+    pr = _priors(h)
+    chain = [pr["G"], pr["N"], h[28, :2], h[29, :2], pr["Prn"], pr["Sn"], pr["Ls"], pr["St"], pr["Li"], pr["B"],
+             pr["Pog"], h[8, :2]]
+    pts = np.array(chain, np.float32)
+    ys = np.arange(float(pts[0, 1]), float(pts[-1, 1]), 1.0)
+    order = np.argsort(pts[:, 1], kind="stable")
+    xs = np.interp(ys, pts[order, 1], pts[order, 0])
+    return np.stack([xs, ys], axis=1).astype(np.float32)
 
 
 def analyze_profile(data: bytes) -> ProfileResult:
     img = decode_image(data)
-    found = _find_face(img)
+    found = _detect_box(img)
     if found is None:
         raise AnalysisError("no_profile")
-    if found["source"] == "yunet" and found["offset"] < 0.04 and found["eye_gap"] > 0.38:
-        # нос ровно посередине между глазами — это анфас, а не профиль
+    box, source = found
+    try:
+        head, pose = _fit_head(img, box)
+    except cv2.error:
+        raise AnalysisError("profile_fail") from None
+    yaw = abs(pose["yaw"])
+    if yaw < FRONTAL_YAW:
         raise AnalysisError("not_profile")
+    if yaw < MIN_PROFILE_YAW:
+        raise AnalysisError("half_profile")
 
     W = img.shape[1]
-    eye_y, mouth_y = found["eye_y"], found["mouth_y"]
-    # направление взгляда по 5 точкам на профиле ненадёжно — пробуем обе стороны
-    P = None
-    for flipped in (not found["right"], found["right"]):
-        work = cv2.flip(img, 1) if flipped else img
-        x, y, w, h = found["box"]
-        if flipped:
-            x = W - x - w
-        # сначала быстрая модель фона, затем GrabCut с разной инициализацией
-        for method, seed in (("bg", 0), ("grabcut", 0), ("grabcut", 1)):
-            cv2.setRNGSeed(seed)
-            try:
-                contour, face_h = _profile_line(work, (x, y, w, h), eye_y, mouth_y, method)
-            except AnalysisError:
-                continue
-            P = _contour_points(contour, eye_y, mouth_y, face_h)
-            if P is not None:
-                break
-        if P is not None:
-            break
-    if P is None:
-        raise AnalysisError("profile_fail")
-    scale = float(np.linalg.norm(P["N"] - P["Pog"]))
+    # куда смотрит лицо: кончик носа впереди точек овала лица (они в профиль сходятся к уху)
+    flipped = bool(head[30, 0] < head[:17, 0].mean())
+    work = cv2.flip(img, 1) if flipped else img
+    h = head.copy()
+    if flipped:
+        h[:, 0] = W - 1 - h[:, 0]
+    pr = _priors(h)
+    scale = float(np.linalg.norm(pr["N"] - h[8, :2]))
+    if scale < 30:
+        raise AnalysisError("too_small")
 
+    lo, hi = h[:, :2].min(0), h[:, :2].max(0)
+    x, y, w, hh = float(lo[0]), float(lo[1]), float(hi[0] - lo[0]), float(hi[1] - lo[1])
+    eye_y = float(h[36:48, 1].mean())
+    mouth_y = float(h[48:68, 1].mean())
+
+    P, contour = None, None
+    for method, seed in (("bg", 0), ("grabcut", 0), ("grabcut", 1)):
+        cv2.setRNGSeed(seed)
+        try:
+            cont, _ = _profile_line(work, (x, y, w, hh), eye_y, mouth_y, method)
+        except AnalysisError:
+            continue
+        P = _contour_points(cont, pr, scale)
+        if P is not None:
+            contour = cont
+            break
+
+    warnings: list[str] = []
+    if P is None:
+        # силуэт не выделился (сложный фон, волосы) — берём точки самой 3D-модели
+        contour = _model_contour(h)
+        P = {k: v.copy() for k, v in pr.items()}
+        if not _plausible(P):
+            raise AnalysisError("profile_fail")
+        warnings.append("Контур профиля размечен по 3D-модели головы — углы приблизительные. "
+                        "Для точности сфотографируйся на однотонном фоне.")
+    if source == "haar":
+        warnings.append("Лицо в профиль найдено с трудом — точность ниже обычной.")
+    if yaw < 65:
+        warnings.append("Голова повёрнута не совсем боком — углы профиля могут быть неточными.")
+
+    scale = float(np.linalg.norm(P["N"] - P["Pog"]))
     m: dict = {}
     m["nasofrontal"] = _angle_at(P["G"], P["N"], P["Prn"])
     # колумелла: точка контура между кончиком носа и основанием
@@ -318,10 +379,6 @@ def analyze_profile(data: bytes) -> ProfileResult:
     else:
         m["neck_depth"] = None
 
-    warnings: list[str] = []
-    if found["source"] == "haar":
-        warnings.append("Профиль найден с трудом — точность ниже обычной.")
-
     # обратно в исходную ориентацию
     def unflip(q):
         q = np.asarray(q, np.float32).copy()
@@ -336,7 +393,9 @@ def analyze_profile(data: bytes) -> ProfileResult:
         flipped=flipped,
         contour=unflip(contour),
         points=points,
-        face_box=(bx, y, w, h),
+        face_box=(bx, y, w, hh),
         m=m,
         warnings=warnings,
+        head=head,
+        yaw=yaw,
     )
