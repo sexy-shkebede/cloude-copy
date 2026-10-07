@@ -132,8 +132,7 @@ def balance_caption(balance: int, unlimited: bool, ratings: int, best: float | N
     if best is not None:
         lines.append(f"🏆 Рейтинг (лучшая оценка): <b>{best:.1f}</b>/10" + (f" • {place} место в топе" if place else ""))
     lines.append(f"🛡 Клан: «{escape(clan_name)}»" if clan_name else "🛡 Клан: нет")
-    if best is not None:
-        lines.append("🙈 Фото в топе: скрыто" if photo_hidden else "👁 Фото в топе: видно другим")
+    lines.append("🙈 Фото в топе: скрыто" if photo_hidden else "👁 Фото в топе: видно другим")
     return "\n".join(lines)
 
 
@@ -222,8 +221,9 @@ def admin_help(stats: dict) -> str:
         "<code>/take ID 2</code> — забрать оценки\n"
         "<code>/user ID</code> — информация о пользователе\n"
         "<code>/refund CHARGE_ID</code> — вернуть звёзды за платёж\n"
+        "<code>/photos ID</code> — фото лучшей оценки человека (видно и скрытые)\n"
         "<code>/unrate ID</code> — убрать лучшую оценку человека из топа (например, чужое фото)\n"
-        "<code>/delclan ID</code> — удалить клан (номер клана или точное название)\n"
+        "<code>/delclan #12</code> — удалить клан по номеру или <code>/delclan Название</code>\n"
         "<code>/stats</code> — статистика\n\n"
         "Подсказка: ответь командой <code>/give 5</code> на пересланное сообщение пользователя — ID подставится сам."
     )

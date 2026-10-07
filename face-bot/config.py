@@ -57,8 +57,14 @@ BANNER_PATH = BASE_DIR / Path(os.environ.get("BANNER_PATH", "").strip() or "asse
 
 # Всё, что бот накапливает, лежит на телефоне в папке data/: база (пользователи, оценки, кланы),
 # фото оценок (data/photos/<id пользователя>/) и лог
-DATA_DIR = Path(os.environ.get("DATA_DIR", "").strip() or BASE_DIR / "data").expanduser()
-DB_PATH = Path(os.environ.get("DB_PATH", "").strip() or DATA_DIR / "bot.db").expanduser()
+def _path(value: str, default: Path) -> Path:
+    """Путь из настроек: относительный считается от папки бота, а не от текущей папки терминала."""
+    p = Path(value.strip()).expanduser() if value.strip() else default
+    return p if p.is_absolute() else BASE_DIR / p
+
+
+DATA_DIR = _path(os.environ.get("DATA_DIR", ""), BASE_DIR / "data")
+DB_PATH = _path(os.environ.get("DB_PATH", ""), DATA_DIR / "bot.db")
 PHOTOS_DIR = DATA_DIR / "photos"
 LOG_PATH = DATA_DIR / "bot.log"
 TOP_SIZE = 10  # мест в каждом топе

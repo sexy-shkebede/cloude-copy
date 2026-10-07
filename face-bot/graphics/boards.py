@@ -91,7 +91,7 @@ def _stars_art(img: Image.Image, center: tuple[float, float]) -> Image.Image:
 
 
 @lru_cache(maxsize=8)
-def render_header(kind: str) -> bytes:
+def render_header(kind: str, brand: str = "I WANNA MOG YOU") -> bytes:
     """kind: top_rating | top_balance | top_clans | clans."""
     tag, title, subtitle = HEADERS[kind]
     seed = {"top_rating": 11, "top_balance": 12, "top_clans": 13, "clans": 14}[kind]
@@ -132,6 +132,6 @@ def render_header(kind: str) -> bytes:
     d = ImageDraw.Draw(img, "RGBA")
     d.text((72, 262), subtitle, font=font(34, "semibold"), fill=GOLD)
     d.line([(72, 330), (420, 330)], fill=(*ORANGE, 150), width=3)
-    d.text((72, 470), "I WANNA MOG YOU", font=font(26, "bold"), fill=MUTED)
+    d.text((72, 470), brand.upper(), font=font(26, "bold"), fill=MUTED)
     return to_jpeg(img)
 

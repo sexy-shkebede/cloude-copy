@@ -162,7 +162,8 @@ FLOW_KEYS = ("state", "front", "front_ts", "front_jpg", "front_fid")
 
 
 def reset_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
-    for k in FLOW_KEYS + ("busy",):
+    """Сбрасывает сценарий оценки. Флаг busy не трогаем: его снимает сам идущий анализ."""
+    for k in FLOW_KEYS:
         context.user_data.pop(k, None)
 
 
@@ -198,7 +199,8 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    reset_flow(context)
+    if not context.user_data.get("busy"):  # идущий анализ доведём до конца, результат придёт следом
+        reset_flow(context)
     await show_menu(update, context)
 
 
@@ -214,7 +216,7 @@ async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     rows = [[("📸 Оценить", "rate"), ("⭐ Пополнить", "shop")]]
     if row["best_score"] is not None:
         rows.append([("🖼 Мой лучший результат", "me:best")])
-        rows.append([("👁 Показывать фото в топе", "me:show") if hidden else ("🙈 Скрыть фото из топа", "me:hide")])
+    rows.append([("👁 Показывать фото в топе", "me:show") if hidden else ("🙈 Скрыть фото из топа", "me:hide")])
     rows.append([("🏆 Топы", "top:rating"), ("🏠 Меню", "menu")])
     await show_photo_screen(
         update, context, f"balance:{bal}:{free}", lambda: render_balance(bal, config.PRICE_STARS, free), caption, kb(rows),
@@ -370,6 +372,7 @@ async def finalize(update: Update, context: ContextTypes.DEFAULT_TYPE, profile, 
     uid = update.effective_user.id
     chat_id = update.effective_chat.id
     front = context.user_data.get("front")
+    front_jpg, front_fid = context.user_data.get("front_jpg"), context.user_data.get("front_fid")
     gender = context.user_data.get("gender", MALE)
     if front is None:
         reset_flow(context)
@@ -411,9 +414,9 @@ async def finalize(update: Update, context: ContextTypes.DEFAULT_TYPE, profile, 
     rid, record = db.record_rating(uid, report.total, {p.key: round(p.score, 2) for p in report.parts}, paid=not free,
                                    gender=gender, details=report_details(report))
     card_fid = sent[0].photo[-1].file_id if sent and sent[0].photo else None
-    await store_rating_files(uid, rid, context.user_data.get("front_jpg"),
+    await store_rating_files(uid, rid, front_jpg,
                              side_data if profile is not None else None, card,
-                             front_fid=context.user_data.get("front_fid"),
+                             front_fid=front_fid,
                              side_fid=side_fid if profile is not None else None, card_fid=card_fid)
     chunks = texts.format_report(report)
     bal_line = "\n\n💰 Осталось: ∞ (админ)" if free else (
@@ -432,13 +435,15 @@ async def finalize(update: Update, context: ContextTypes.DEFAULT_TYPE, profile, 
 
 # ---------------------------------------------------------------- хранение фото и результатов
 def compress_photo(data: bytes | None, max_side: int = 1280) -> bytes | None:
-    """Фото для архива на телефоне: JPEG до 1280 px по большей стороне (~100–200 КБ)."""
+    """Фото для архива на телефоне: JPEG до 1280 px по большей стороне (~100–250 КБ)."""
     if not data:
         return None
     try:
         from PIL import Image, ImageOps
 
-        im = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+        im = Image.open(io.BytesIO(data))
+        im.draft("RGB", (max_side, max_side))  # большой JPEG сразу читаем уменьшенным: меньше памяти на телефоне
+        im = ImageOps.exif_transpose(im).convert("RGB")
         im.thumbnail((max_side, max_side), Image.LANCZOS)
         buf = io.BytesIO()
         im.save(buf, "JPEG", quality=87, optimize=True)
@@ -505,19 +510,22 @@ def has_rating_photos(rating) -> bool:
     return rating is not None and bool(_rating_media(rating, prefer_ids=True))
 
 
-async def send_rating_photos(context: ContextTypes.DEFAULT_TYPE, chat_id: int, rating, caption: str) -> bool:
+async def send_rating_photos(context: ContextTypes.DEFAULT_TYPE, chat_id: int, rating, caption: str,
+                             protect: bool = False) -> bool:
+    """protect=True — чужие фото нельзя переслать или сохранить из чата."""
     for prefer_ids in (True, False):
         items = await asyncio.to_thread(_rating_media, rating, prefer_ids)
         if not items:
             return False
         try:
             if len(items) == 1:
-                msgs = [await context.bot.send_photo(chat_id, items[0][1], caption=caption, parse_mode=HTML)]
+                msgs = [await context.bot.send_photo(chat_id, items[0][1], caption=caption, parse_mode=HTML,
+                                                     protect_content=protect)]
             else:
                 msgs = await context.bot.send_media_group(chat_id, [
                     InputMediaPhoto(src, caption=caption if i == 0 else None, parse_mode=HTML if i == 0 else None)
                     for i, (_, src) in enumerate(items)
-                ])
+                ], protect_content=protect)
         except BadRequest as e:  # file_id устарел (например, сменили токен) — шлём файлы с телефона
             if prefer_ids and any(isinstance(src, str) for _, src in items):
                 log.info("file_id не подошёл (%s), отправляю фото из файлов", e)
@@ -527,6 +535,14 @@ async def send_rating_photos(context: ContextTypes.DEFAULT_TYPE, chat_id: int, r
         db.set_rating_files(rating["id"], **ids)
         return True
     return False
+
+
+async def safe_answer(q, *args, **kwargs) -> None:
+    """Ответ на нажатие кнопки. Если запрос устарел (бот был офлайн), действие всё равно выполняем."""
+    try:
+        await q.answer(*args, **kwargs)
+    except TelegramError as e:
+        log.debug("answerCallbackQuery failed: %s", e)
 
 
 def photo_cooldown(context: ContextTypes.DEFAULT_TYPE, seconds: float = 3.0) -> bool:
@@ -544,7 +560,7 @@ ANSWERED = object()  # обработчик уже ответил на нажа�
 
 
 def header_image(kind: str):
-    return lambda: render_header(kind)
+    return lambda: render_header(kind, config.BRAND)
 
 
 def place_buttons(ids: list[int], prefix: str) -> list[list[InlineKeyboardButton]]:
@@ -573,7 +589,7 @@ async def show_top(update: Update, context: ContextTypes.DEFAULT_TYPE, tab: str 
         tab = "rating"
         rows = db.top_rating(config.TOP_SIZE)
         caption = texts.top_rating_caption(rows, db.rating_place(uid), me["best_score"], db.rated_count())
-        extra = place_buttons([r["id"] for r in rows], "top:ph")
+        extra = place_buttons([r["best_rating_id"] for r in rows], "top:ph")  # в кнопках номер оценки, не ID человека
         kind = "top_rating"
     tabs = [InlineKeyboardButton(f"• {label} •" if key == tab else label, callback_data=f"top:{key}")
             for key, label in TOP_TABS]
@@ -581,26 +597,30 @@ async def show_top(update: Update, context: ContextTypes.DEFAULT_TYPE, tab: str 
     await show_photo_screen(update, context, f"hdr:{kind}", header_image(kind), caption, markup)
 
 
-async def show_top_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, target: int):
-    """Фото, за которое участник занял место в топе по рейтингу."""
+async def show_top_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, rating_id: int):
+    """Фото, за которое участник занял место в топе по рейтингу (кнопка несёт номер этой оценки)."""
     uid = update.effective_user.id
     rows = db.top_rating(config.TOP_SIZE)
-    ids = [int(r["id"]) for r in rows]
-    if target not in ids:
-        return "Этот участник уже не в топ-10. Открой топ заново 🔄"
-    place = ids.index(target) + 1
+    ids = [r["best_rating_id"] for r in rows]
+    if rating_id not in ids:
+        return "Этот результат уже не в топ-10. Открой топ заново 🔄"
+    place = ids.index(rating_id) + 1
     row = rows[place - 1]
-    if row["photo_hidden"] and target != uid:
+    target = int(row["id"])
+    admin_view = bool(row["photo_hidden"]) and target != uid and is_admin(uid)
+    if row["photo_hidden"] and target != uid and not admin_view:
         return "🙈 Участник скрыл своё фото из топа."
-    rating = db.best_rating(target)
+    rating = db.get_rating(rating_id)
     if not has_rating_photos(rating):
         return texts.NO_PHOTO
     if photo_cooldown(context):
         return "⏳ Подожди пару секунд…"
-    await update.callback_query.answer()
+    await safe_answer(update.callback_query)
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
-    if not await send_rating_photos(context, update.effective_chat.id, rating,
-                                    texts.photo_caption(place, row, rating, row["clan_name"])):
+    caption = texts.photo_caption(place, row, rating, row["clan_name"])
+    if admin_view:
+        caption += "\n🔧 Участник скрыл фото — видно только админам"
+    if not await send_rating_photos(context, update.effective_chat.id, rating, caption, protect=target != uid):
         await context.bot.send_message(update.effective_chat.id, texts.NO_PHOTO)
     return ANSWERED
 
@@ -614,7 +634,7 @@ async def show_my_best(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return texts.NO_PHOTO
     if photo_cooldown(context):
         return "⏳ Подожди пару секунд…"
-    await update.callback_query.answer()
+    await safe_answer(update.callback_query)
     await context.bot.send_chat_action(update.effective_chat.id, ChatAction.UPLOAD_PHOTO)
     if not await send_rating_photos(context, update.effective_chat.id, rating,
                                     texts.my_best_caption(rating, db.rating_place(uid))):
@@ -628,17 +648,26 @@ async def cmd_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ---------------------------------------------------------------- кланы
 CLANS_PER_PAGE = 8
+CLAN_NAME_TTL = 10 * 60  # сколько бот ждёт название клана после нажатия «Создать клан»
 NAME_PUNCT = set(" -_.,!?'\"()#&+*~|:")
+ZWJ = "\u200d"  # склейка эмодзи из нескольких частей — единственный разрешённый невидимый символ
+# символы-«пустышки»: выглядят как пробел или ничего, но формально считаются буквами
+INVISIBLE = set("\u034f\u115f\u1160\u3164\uffa0\u2800\u200b\u200c\u2060\ufeff\u180e")
 
 
 def clean_clan_name(raw: str | None) -> tuple[str | None, str | None]:
     """Возвращает (название, None) или (None, код ошибки): length | chars | letters."""
-    name = " ".join((raw or "").split())
+    name = unicodedata.normalize("NFKC", raw or "")
+    name = " ".join("".join(ch for ch in name if ch not in INVISIBLE).split())
     if not 2 <= len(name) <= 24:
         return None, "length"
+    marks = 0
     for ch in name:
         cat = unicodedata.category(ch)
-        if ch in "<>" or not (ch in NAME_PUNCT or cat[0] in "LNMS" or ch == "‍"):
+        marks = marks + 1 if cat[0] == "M" else 0
+        if marks > 2:  # «залго»-текст из десятков диакритик наползает на соседние строки топа
+            return None, "chars"
+        if ch in "<>" or not (ch in NAME_PUNCT or cat[0] in "LNMS" or ch == ZWJ):
             return None, "chars"
     if not any(unicodedata.category(ch)[0] in "LN" for ch in name):
         return None, "letters"
@@ -717,9 +746,10 @@ async def clan_create_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return texts.has_clan(own["name"])
     if context.user_data.get("busy"):
         return "⏳ Подожди, я ещё анализирую фото…"
-    await update.callback_query.answer()
+    await safe_answer(update.callback_query)
     reset_flow(context)
     context.user_data["state"] = "clan_name"
+    context.user_data["clan_name_ts"] = time.monotonic()
     cid = db.user_clan_id(uid)
     current = db.get_clan(cid) if cid is not None else None
     await context.bot.send_message(update.effective_chat.id, texts.clan_name_prompt(current["name"] if current else None),
@@ -772,7 +802,9 @@ async def clan_join(update: Update, context: ContextTypes.DEFAULT_TYPE, cid: int
     if res == "owner":
         own = db.owned_clan(uid)
         return texts.owner_cant_join(own["name"] if own else "")
-    if res == "ok" and clan["owner_id"] != uid:
+    notified = context.bot_data.setdefault("join_notified", {})
+    if res == "ok" and clan["owner_id"] != uid and time.monotonic() - notified.get((cid, uid), -1e9) > 3600:
+        notified[(cid, uid)] = time.monotonic()  # не чаще раза в час: вступить-выйти по кругу не заспамит главу
         try:
             await context.bot.send_message(clan["owner_id"], texts.new_member(texts.user_name(db.get_user(uid)), clan["name"]),
                                            parse_mode=HTML)
@@ -782,7 +814,7 @@ async def clan_join(update: Update, context: ContextTypes.DEFAULT_TYPE, cid: int
     return None
 
 
-async def clan_leave(update: Update, context: ContextTypes.DEFAULT_TYPE, confirmed: bool):
+async def clan_leave(update: Update, context: ContextTypes.DEFAULT_TYPE, confirmed: bool, confirm_id: int | None = None):
     uid = update.effective_user.id
     cid = db.user_clan_id(uid)
     clan = db.get_clan(cid) if cid is not None else None
@@ -793,8 +825,11 @@ async def clan_leave(update: Update, context: ContextTypes.DEFAULT_TYPE, confirm
         return "Глава не может выйти из своего клана — его можно только распустить."
     if not confirmed:
         await show_photo_screen(update, context, "hdr:clans", header_image("clans"), texts.leave_confirm(clan["name"]),
-                                kb([[("🚪 Да, выйти", "clan:leavec"), ("◀️ Нет", "clans")]]))
+                                kb([[("🚪 Да, выйти", f"clan:leavec:{clan['id']}"), ("◀️ Нет", "clans")]]))
         return None
+    if confirm_id != clan["id"]:  # кнопка из старого сообщения про другой клан
+        await show_clans(update, context)
+        return "Это старая кнопка — открыл твой текущий клан."
     res = db.leave_clan(uid)
     if res == "owner":
         return "Глава не может выйти из своего клана — его можно только распустить."
@@ -802,7 +837,7 @@ async def clan_leave(update: Update, context: ContextTypes.DEFAULT_TYPE, confirm
     return None
 
 
-async def clan_disband(update: Update, context: ContextTypes.DEFAULT_TYPE, confirmed: bool):
+async def clan_disband(update: Update, context: ContextTypes.DEFAULT_TYPE, confirmed: bool, confirm_id: int | None = None):
     uid = update.effective_user.id
     own = db.owned_clan(uid)
     if own is None:
@@ -812,8 +847,11 @@ async def clan_disband(update: Update, context: ContextTypes.DEFAULT_TYPE, confi
     if not confirmed:
         await show_photo_screen(update, context, "hdr:clans", header_image("clans"),
                                 texts.disband_confirm(own["name"], int(clan["members"]) if clan else 1),
-                                kb([[("🗑 Да, распустить", "clan:disbandc"), ("◀️ Нет", "clans")]]))
+                                kb([[("🗑 Да, распустить", f"clan:disbandc:{own['id']}"), ("◀️ Нет", "clans")]]))
         return None
+    if confirm_id != own["id"]:  # кнопка из старого сообщения про другой клан
+        await show_clans(update, context)
+        return "Это старая кнопка — открыл твой текущий клан."
     deleted, _ = db.delete_clan(int(own["id"]))
     if deleted is not None:
         log.info("Клан #%s «%s» распущен главой %s", own["id"], own["name"], uid)
@@ -872,9 +910,9 @@ async def route_social(update: Update, context: ContextTypes.DEFAULT_TYPE, data:
             if cid is not None:
                 return await clan_join(update, context, cid, confirmed=action == "joinc")
         elif action in ("leave", "leavec"):
-            return await clan_leave(update, context, confirmed=action == "leavec")
+            return await clan_leave(update, context, confirmed=action == "leavec", confirm_id=_int_arg(parts, 2))
         elif action in ("disband", "disbandc"):
-            return await clan_disband(update, context, confirmed=action == "disbandc")
+            return await clan_disband(update, context, confirmed=action == "disbandc", confirm_id=_int_arg(parts, 2))
     return None
 
 
@@ -1088,12 +1126,18 @@ async def cmd_delclan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not is_admin(update.effective_user.id):
         return
     ref = " ".join(context.args or [])
-    clan = db.find_clan(ref) if ref else None
-    if clan is None:
+    found = db.find_clans(ref) if ref else []
+    if not found:
         await update.effective_message.reply_text(
-            "⚠️ Клан не найден. Пример: <code>/delclan 12</code> или <code>/delclan Название</code>\n"
+            "⚠️ Клан не найден. Пример: <code>/delclan #12</code> (номер) или <code>/delclan Название</code>\n"
             "Номер клана админ видит в карточке клана.", parse_mode=HTML)
         return
+    if len(found) > 1:
+        options = "\n".join(f"• <code>/delclan #{c['id']}</code> — {texts.clan_title(c['name'])}" for c in found)
+        await update.effective_message.reply_text(
+            f"⚠️ «{escape(ref)}» подходит к нескольким кланам. Укажи номер с решёткой:\n{options}", parse_mode=HTML)
+        return
+    clan = found[0]
     deleted, members = db.delete_clan(int(clan["id"]))
     if deleted is None:
         await update.effective_message.reply_text("Клан уже удалён.")
@@ -1109,6 +1153,26 @@ async def cmd_delclan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                                            parse_mode=HTML)
         except TelegramError:
             pass
+
+
+async def cmd_photos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Админ смотрит фото лучшей оценки человека (даже скрытые) — например, перед /unrate."""
+    if not is_admin(update.effective_user.id):
+        return
+    target, _, err = await _resolve_target(update, context, need_amount=False)
+    if err:
+        await update.effective_message.reply_text(f"⚠️ {err}\nПример: <code>/photos 123456</code>", parse_mode=HTML)
+        return
+    rating = db.best_rating(target)
+    if rating is None:
+        await update.effective_message.reply_text("У пользователя нет оценок в топе.")
+        return
+    place = db.rating_place(target)
+    caption = (f"🔧 Лучшая оценка {_user_label(target)}: <b>{rating['score']:.1f}</b>"
+               + (f" • {place} место в топе" if place else "")
+               + (" • фото скрыто от участников" if db.get_user(target)["photo_hidden"] else ""))
+    if not await send_rating_photos(context, update.effective_chat.id, rating, caption):
+        await update.effective_message.reply_text(texts.NO_PHOTO)
 
 
 async def cmd_unrate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1153,6 +1217,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     elif data.startswith("gender:"):
         await choose_gender(update, context, FEMALE if data.endswith(FEMALE) else MALE)
     elif data == "cancel":
+        if context.user_data.get("busy"):
+            await context.bot.send_message(update.effective_chat.id,
+                                           "⏳ Фото уже анализируется — отменить нельзя. Результат придёт через пару секунд.")
+            return
         reset_flow(context)
         await context.bot.send_message(update.effective_chat.id, "❌ Оценка отменена. Оценки с баланса не списаны.",
                                        reply_markup=kb([[("🏠 Меню", "menu")]]))
@@ -1185,8 +1253,19 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await context.bot.send_message(update.effective_chat.id, texts.admin_help(db.stats()), parse_mode=HTML)
 
 
+async def clear_clan_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Любая команда отменяет ожидание названия клана, чтобы потом обычное сообщение не стало кланом."""
+    if context.user_data.get("state") == "clan_name":
+        context.user_data.pop("state", None)
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.edited_message is not None:  # правка старого сообщения — не новый ввод
+        return
     state = context.user_data.get("state")
+    if state == "clan_name" and time.monotonic() - context.user_data.get("clan_name_ts", 0.0) > CLAN_NAME_TTL:
+        context.user_data.pop("state", None)
+        state = None
     if state == "clan_name":
         await on_clan_name(update, context)
     elif state in ("front", "side"):
@@ -1215,7 +1294,7 @@ async def warm_up_images() -> None:
     """Рисуем шапки топов и кланов заранее в фоне, чтобы первое открытие не ждало."""
     for kind in HEADERS:
         try:
-            await asyncio.to_thread(render_header, kind)
+            await asyncio.to_thread(render_header, kind, config.BRAND)
         except Exception:
             log.exception("Не удалось нарисовать картинку %s", kind)
 
@@ -1259,6 +1338,7 @@ def build_app(token: str, request=None) -> Application:
     else:
         builder = builder.connect_timeout(20).read_timeout(30).write_timeout(60).media_write_timeout(120)
     app = builder.build()
+    app.add_handler(MessageHandler(filters.COMMAND, clear_clan_prompt), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("rate", start_rating))
     app.add_handler(CommandHandler("balance", show_balance))
@@ -1276,6 +1356,7 @@ def build_app(token: str, request=None) -> Application:
     app.add_handler(CommandHandler(["clan", "clans"], cmd_clan))
     app.add_handler(CommandHandler("delclan", cmd_delclan))
     app.add_handler(CommandHandler("unrate", cmd_unrate))
+    app.add_handler(CommandHandler("photos", cmd_photos))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(PreCheckoutQueryHandler(on_precheckout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, on_successful_payment))

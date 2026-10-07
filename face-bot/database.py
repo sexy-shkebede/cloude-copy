@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import sqlite3
 import threading
+import unicodedata
 from pathlib import Path
 
 SCHEMA = """
@@ -93,17 +94,25 @@ RATING_ORDER = "best_score DESC, best_rating_id ASC, id ASC"
 BALANCE_ORDER = "balance DESC, id ASC"
 CLAN_ORDER = "rating DESC, members DESC, id ASC"
 
+# сумма округляется: иначе 5.2 + 5.4 даёт 10.600000000000001 и обгоняет честные 10.6 вопреки порядку
 CLANS_WITH_RATING = """
     SELECT c.id, c.name, c.owner_id, c.created_at,
-           COUNT(u.id) AS members, COALESCE(SUM(u.best_score), 0) AS rating
+           COUNT(u.id) AS members, ROUND(COALESCE(SUM(u.best_score), 0), 1) AS rating
     FROM clans c LEFT JOIN users u ON u.clan_id = c.id
     GROUP BY c.id
 """
 
 
+# латинские буквы, которые выглядят как кириллические: «Альфа» и «Aльфa» должны считаться одним названием
+_LOOKALIKES = str.maketrans("abcehkmoptxy", "авсенкмортху")
+
+
 def clan_key(name: str) -> str:
-    """Ключ уникальности названия клана: без учёта регистра, лишних пробелов и разницы «ё»/«е»."""
-    return " ".join(name.split()).casefold().replace("ё", "е")
+    """Ключ уникальности названия клана: без учёта регистра, пробелов, невидимых символов, «ё»/«е»
+    и одинаковых на вид латинских и русских букв."""
+    name = unicodedata.normalize("NFKC", name)
+    name = "".join(ch for ch in name if unicodedata.category(ch) != "Cf" and not 0xFE00 <= ord(ch) <= 0xFE0F)
+    return " ".join(name.split()).casefold().replace("ё", "е").translate(_LOOKALIKES)
 
 
 def _now() -> str:
@@ -127,6 +136,12 @@ class Database:
                 if name not in have:
                     self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
         self.conn.executescript(INDEXES)
+        # ключи названий кланов пересчитываются, если правило сравнения названий изменилось
+        for row in self.conn.execute("SELECT id, name, name_key FROM clans").fetchall():
+            key = clan_key(row["name"])
+            if key != row["name_key"] and not self.conn.execute(
+                    "SELECT 1 FROM clans WHERE name_key=? AND id<>?", (key, row["id"])).fetchone():
+                self.conn.execute("UPDATE clans SET name_key=? WHERE id=?", (key, row["id"]))
         # оценки, сделанные до появления топов: запоминаем, какая из них лучшая
         self.conn.execute(
             "UPDATE users SET best_rating_id = (SELECT r.id FROM ratings r WHERE r.user_id = users.id "
@@ -342,15 +357,22 @@ class Database:
         row = self.get_user(user_id)
         return int(row["clan_id"]) if row and row["clan_id"] is not None else None
 
-    def find_clan(self, ref: str) -> sqlite3.Row | None:
-        """Поиск клана по номеру или точному названию (для админа)."""
+    def find_clans(self, ref: str) -> list[sqlite3.Row]:
+        """Кланы для админа: «#12» — по номеру, иначе по точному названию; число без «#» ищется и так, и так."""
         ref = ref.strip()
         with self.lock:
-            if ref.isdigit():
-                row = self.conn.execute("SELECT * FROM clans WHERE id=?", (int(ref),)).fetchone()
-                if row:
-                    return row
-            return self.conn.execute("SELECT * FROM clans WHERE name_key=?", (clan_key(ref),)).fetchone()
+            if ref.startswith("#") and ref[1:].isdigit():
+                rows = [self.conn.execute("SELECT * FROM clans WHERE id=?", (int(ref[1:]),)).fetchone()]
+            else:
+                rows = [self.conn.execute("SELECT * FROM clans WHERE name_key=?", (clan_key(ref),)).fetchone()]
+                if ref.isdigit():
+                    rows.append(self.conn.execute("SELECT * FROM clans WHERE id=?", (int(ref),)).fetchone())
+            out, seen = [], set()
+            for r in rows:
+                if r is not None and r["id"] not in seen:
+                    seen.add(r["id"])
+                    out.append(r)
+            return out
 
     def join_clan(self, user_id: int, clan_id: int) -> str:
         """Вступление в клан. Результат: 'ok', 'no_clan', 'already', 'owner' (глава другого клана)."""
