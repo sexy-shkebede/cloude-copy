@@ -17,6 +17,7 @@ import math
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT.parent / "docs"
@@ -39,6 +40,8 @@ def typo(text: str) -> str:
     text = SHORT_WORDS.sub(lambda m: m.group(1) + "\u00a0", text)
     text = PARTICLES.sub(lambda m: "\u00a0" + m.group(1), text)
     text = re.sub(r"(\d)\s(%|мм|см|мин|г\.|гг\.|в\.|балл)", "\\1\u00a0\\2", text)
+    text = re.sub(r"\b([IVX]+)\s(в\.)", "\\1\u00a0\\2", text)  # «III в.»
+    text = re.sub(r"\bн\. э\.", "н.\u00a0э.", text)  # «н. э.» не разрываем
     return text
 
 
@@ -73,6 +76,16 @@ def read_time(article: dict) -> str:
 
 
 # ---------------------------------------------------------------- картинки
+# site.json → images → {slug}: caption (подпись), необязательные credit (источник; по умолчанию The Met,
+# "" = без источника), alt (описание для незрячих; по умолчанию подпись) и met (номер в коллекции The Met).
+def image_caption(info: dict) -> str:
+    return f"{info['caption']} {info.get('credit', MET_CREDIT)}".strip()
+
+
+def image_alt(info: dict) -> str:
+    return info.get("alt") or info["caption"]
+
+
 def picture(slug: str, kind: str, prefix: str, sizes: str, alt: str, eager: bool = False) -> str:
     """kind: p (4:5) или l (3:2). Файлы: assets/img/{slug}-p600/1200.webp, -l750/1500.webp."""
     if kind == "p":
@@ -89,18 +102,20 @@ def picture(slug: str, kind: str, prefix: str, sizes: str, alt: str, eager: bool
 
 # ---------------------------------------------------------------- каркас страницы
 def head(title: str, description: str, prefix: str, path: str, og_image: str | None, og_type: str = "website",
-         base_tag: str = "") -> str:
+         early: str = "") -> str:
+    """early: разметка сразу после charset/viewport, она же заменяет обычные ссылки на стили и скрипт (только 404)."""
     canonical = f"{SITE_URL}/{path}" if SITE_URL else ""
     og_img = ""
     if og_image:
         og_img_url = f"{SITE_URL}/{og_image}" if SITE_URL else f"{prefix}{og_image}"
         og_img = f'<meta property="og:image" content="{attr(og_img_url)}">\n<meta name="twitter:card" content="summary_large_image">'
+    early_block = early + "\n" if early else ""
     return f"""<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{attr(title)}</title>
+{early_block}<title>{attr(title)}</title>
 <meta name="description" content="{attr(description)}">
 <meta name="theme-color" content="#f4f4f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
@@ -111,7 +126,7 @@ def head(title: str, description: str, prefix: str, path: str, og_image: str | N
 {f'<meta property="og:url" content="{attr(canonical)}">' if canonical else ''}
 {f'<link rel="canonical" href="{attr(canonical)}">' if canonical else ''}
 {og_img}
-{base_tag or assets_tags(prefix)}
+{'' if early else assets_tags(prefix)}
 <script>
 (function(){{var r=document.documentElement;r.classList.add("js");try{{var t=localStorage.getItem("kanon-theme");if(t==="light"||t==="dark")r.setAttribute("data-theme",t);}}catch(e){{}}}})();
 </script>
@@ -195,6 +210,18 @@ def article_url(slug: str, prefix: str) -> str:
     return f"{prefix}articles/{slug}.html"
 
 
+def quote_text(text: str) -> str:
+    """Текст цитаты без кавычек и без точки перед закрывающей »."""
+    return text.strip().strip("«»\"").rstrip().rstrip(".")
+
+
+def text_with_arrow(text: str, icon: str = "ph-arrow-right") -> str:
+    """Последнее слово и стрелка в одном неразрывном фрагменте: стрелка не уезжает на отдельную строку."""
+    head_part, _, last = e(text).rpartition(" ")
+    tail = f'<span class="nowrap">{last}<i class="ph {icon}" aria-hidden="true"></i></span>'
+    return f"{head_part} {tail}" if head_part else tail
+
+
 # ---------------------------------------------------------------- главная
 def render_index(arts: dict, order: list[str], site: dict) -> str:
     p = ""
@@ -206,11 +233,12 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
     main_top, rest_top = top[0], top[1:]
 
     def top_item(a, with_image):
-        img = (f'<span class="media">{picture(a["slug"], "l", p, "(max-width: 680px) 92vw, (max-width: 1000px) 45vw, 26vw", a["image_alt"])}</span>'
+        # ссылка-картинка дублирует заголовок: убираем её из табуляции и дерева доступности
+        img = (f'<a href="{article_url(a["slug"], p)}" tabindex="-1" aria-hidden="true"><span class="media">'
+               f'{picture(a["slug"], "l", p, "(max-width: 680px) 92vw, (max-width: 1000px) 45vw, 26vw", a["image_alt"])}</span></a>\n  '
                if with_image else "")
         return f"""<article class="top-item{'' if with_image else ' text-only'}" data-reveal>
-  <a href="{article_url(a['slug'], p)}">{img}</a>
-  <a class="rubric" href="{article_url(a['slug'], p)}">{e(a['category'])}</a>
+  {img}<a class="rubric" href="{article_url(a['slug'], p)}">{e(a['category'])}</a>
   <h3><a href="{article_url(a['slug'], p)}"><span class="title-link">{e(a['title'])}</span></a></h3>
   <p class="summary">{e(a['summary'])}</p>
 </article>"""
@@ -248,17 +276,16 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
     glossary = "".join(f'<div class="term"><dt>{e(g["term"])}</dt><dd>{e(g["text"])}</dd></div>' for g in site["glossary"])
 
     body = f"""{header(p)}
-<main id="main">
+<main id="main" tabindex="-1">
   <section class="wrap lead" aria-label="Главная новость">
     <div class="lead-head">
       <a class="rubric" href="{article_url(lead['slug'], p)}">{e(lead['category'])}</a>
       <h1><a href="{article_url(lead['slug'], p)}"><span class="title-link">{e(lead['title'])}</span></a></h1>
     </div>
-    <a class="media" href="{article_url(lead['slug'], p)}">{picture(lead['slug'], 'l', p, '(max-width: 900px) 92vw, 58vw', lead['image_alt'], eager=True)}</a>
+    <a class="media" href="{article_url(lead['slug'], p)}" tabindex="-1" aria-hidden="true">{picture(lead['slug'], 'l', p, '(max-width: 900px) 92vw, 58vw', lead['image_alt'], eager=True)}</a>
     <div class="lead-text">
       <p class="dek">{e(lead['dek'])}</p>
       {byline_meta(lead)}
-      <a class="more-link" href="{article_url(lead['slug'], p)}">Читать <i class="ph ph-arrow-right" aria-hidden="true"></i></a>
     </div>
   </section>
 
@@ -271,6 +298,7 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
           <ul class="ticker-list" aria-hidden="true">{ticker_items.replace('<a ', '<a tabindex="-1" ')}</ul>
         </div>
       </div>
+      <button class="ticker-toggle" type="button" aria-pressed="false" aria-label="Остановить ленту"><i class="ph ph-pause" aria-hidden="true"></i><i class="ph ph-play" aria-hidden="true"></i></button>
     </div>
   </section>
 
@@ -278,7 +306,7 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
     <div class="block-head"><h2 class="block-title">Главное за неделю</h2></div>
     <div class="top-grid">
       <article class="top-main" data-reveal>
-        <a href="{article_url(main_top['slug'], p)}"><span class="media">{picture(main_top['slug'], 'p', p, '(max-width: 680px) 92vw, (max-width: 1000px) 45vw, 36vw', main_top['image_alt'])}</span></a>
+        <a href="{article_url(main_top['slug'], p)}" tabindex="-1" aria-hidden="true"><span class="media">{picture(main_top['slug'], 'p', p, '(max-width: 680px) 92vw, (max-width: 1000px) 45vw, 36vw', main_top['image_alt'])}</span></a>
         <div style="display:flex;flex-direction:column;gap:14px">
           <a class="rubric" href="{article_url(main_top['slug'], p)}">{e(main_top['category'])}</a>
           <h3><a href="{article_url(main_top['slug'], p)}"><span class="title-link">{e(main_top['title'])}</span></a></h3>
@@ -315,8 +343,8 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
 
   <section class="wrap quote-band" aria-label="Цитата недели" data-reveal>
     <figure>
-      <blockquote><p>«{e(quote['text'].strip('«»'))}»</p></blockquote>
-      <figcaption><strong>{e(quote.get('cite', ''))}</strong><a class="more-link" href="{article_url(q_art['slug'], p)}">{e(q_art['title'])} <i class="ph ph-arrow-right" aria-hidden="true"></i></a></figcaption>
+      <blockquote><p>«{e(quote_text(quote['text']))}»</p></blockquote>
+      <figcaption><strong>{e(quote.get('cite', ''))}</strong><a class="more-link" href="{article_url(q_art['slug'], p)}">{text_with_arrow(q_art['title'])}</a></figcaption>
     </figure>
   </section>
 
@@ -334,7 +362,8 @@ def render_index(arts: dict, order: list[str], site: dict) -> str:
   </section>
 </main>
 {footer(p, site)}"""
-    return head(f"{site['name']}: {site['tagline']}", site["description"], p, "index.html",
+    tagline = site["tagline"]
+    return head(f"{site['name']}: {tagline[:1].lower()}{tagline[1:]}", site["description"], p, "index.html",
                 f"assets/og/{lead['slug']}.jpg") + "\n" + body
 
 
@@ -361,8 +390,7 @@ def render_blocks(a: dict, site: dict, p: str) -> str:
                 text = text.replace(brand, f'<a href="{attr(BOT["url"])}" target="_blank" rel="noopener">{brand}</a>', 1)
             out.append(f"<p>{text}</p>")
         elif t == "quote":
-            text = b["text"].strip().strip("«»\"")
-            out.append(f"<blockquote><p>«{e(text)}»</p><footer>{e(b.get('cite', ''))}</footer></blockquote>")
+            out.append(f"<blockquote><p>«{e(quote_text(b['text']))}»</p><footer>{e(b.get('cite', ''))}</footer></blockquote>")
         elif t == "ul":
             out.append("<ul>" + "".join(f"<li>{e(i)}</li>" for i in b.get("items") or []) + "</ul>")
     return "\n".join(out)
@@ -381,8 +409,7 @@ def bot_aside(a: dict, site: dict) -> str:
 
 def render_article(a: dict, arts: dict, order: list[str], site: dict) -> str:
     p = "../"
-    img_info = site["images"][a["slug"]]
-    caption = f"{img_info['caption']} {MET_CREDIT}"
+    caption = image_caption(site["images"][a["slug"]])
     # «Читайте также»: три соседние по дате статьи другой рубрики, если есть
     others = [arts[s] for s in order if s != a["slug"]]
     others.sort(key=lambda o: (o["category"] == a["category"], abs(dt.date.fromisoformat(o["date"]).toordinal() - dt.date.fromisoformat(a["date"]).toordinal())))
@@ -390,15 +417,15 @@ def render_article(a: dict, arts: dict, order: list[str], site: dict) -> str:
     big, small = rel[0], rel[1:]
     related = f"""<li><a class="related-big" href="{article_url(big['slug'], p)}">
   <span class="media">{picture(big['slug'], 'p', p, '(max-width: 860px) 120px, 22vw', '')}</span>
-  <span><span class="rubric">{e(big['category'])}</span><h3><span class="title-link">{e(big['title'])}</span></h3></span>
+  <div class="related-text"><span class="rubric">{e(big['category'])}</span><h3><span class="title-link">{e(big['title'])}</span></h3></div>
 </a></li>""" + "".join(
         f"""<li><a class="related-row" href="{article_url(o['slug'], p)}">
   <span class="media">{picture(o['slug'], 'p', p, '120px', '')}</span>
-  <span><span class="rubric">{e(o['category'])}</span><h3><span class="title-link">{e(o['title'])}</span></h3></span>
+  <div class="related-text"><span class="rubric">{e(o['category'])}</span><h3><span class="title-link">{e(o['title'])}</span></h3></div>
 </a></li>""" for o in small)
 
     body = f"""{header(p)}
-<main id="main">
+<main id="main" tabindex="-1">
   <article>
     <header class="narrow article-head">
       <a class="rubric" href="{p}index.html#lenta">{e(a['category'])}</a>
@@ -436,13 +463,17 @@ def render_about(arts: dict, site: dict) -> str:
     p = ""
     credits = []
     for slug, info in site["images"].items():
-        credits.append(f'<li>{e(info["caption"])} <a href="https://www.metmuseum.org/art/collection/search/{info["met"]}" rel="noopener">Карточка в коллекции The Met</a></li>')
+        if not info.get("met"):
+            continue  # не музейное фото (например, иллюстрация бота): в список The Met не попадает
+        # диапазон лет («130-138») не рвём по дефису: в шрифтах нет неразрывного дефиса
+        caption = re.sub(r"\d+-\d+", lambda m: f'<span class="nowrap">{m.group(0)}</span>', e(info["caption"]))
+        credits.append(f'<li>{caption} <a href="https://www.metmuseum.org/art/collection/search/{info["met"]}" rel="noopener">Карточка в коллекции The Met</a></li>')
     body = f"""{header(p, 'about.html')}
-<main id="main" class="wrap page">
+<main id="main" class="wrap page" tabindex="-1">
   <div class="page-grid">
     <div class="prose" style="padding-top:0">
       <h1 style="font-size:clamp(2.25rem,5vw,3.75rem);line-height:1.04;margin:0">О проекте</h1>
-      <p>{e("«Канон»: развлекательное издание о луксмаксинге, трендах, привычках и спорах вокруг внешности.")}</p>
+      <p>{e("«Канон» пишет о луксмаксинге: трендах, привычках и спорах вокруг внешности. Это развлекательное издание.")}</p>
       <p>{e("Новости на сайте придуманы редакцией. Люди, клиники, студии и приложения в них вымышлены, любые совпадения случайны. Единственный материал с настоящими данными: эксперимент, в котором мы оценили 22 античные головы алгоритмом Telegram-бота I WANNA MOG YOU.")}</p>
       {f'<p>{e("Оценить собственное лицо тем же алгоритмом можно в боте")} <a href="{attr(BOT["url"])}" target="_blank" rel="noopener">{e(BOT["handle"])}</a>.</p>' if BOT else ''}
       <p>{e("Мы не даём медицинских советов. Если вас беспокоит здоровье, кожа или зубы, обратитесь к врачу. Если мысли о внешности мешают жить, поговорите с близкими или психологом.")}</p>
@@ -453,8 +484,8 @@ def render_about(arts: dict, site: dict) -> str:
       <p>{e("Source Serif 4 (Adobe) и Geist (Vercel), лицензия SIL Open Font License. Иконки Phosphor (MIT).")}</p>
     </div>
     <figure style="margin:0">
-      <span class="media">{picture('about', 'p', p, '(max-width: 860px) 92vw, 40vw', site['images']['about']['caption'], eager=True)}</span>
-      <figcaption style="margin-top:10px;font-size:.8125rem;color:var(--muted)">{e(site['images']['about']['caption'] + ' ' + MET_CREDIT)}</figcaption>
+      <span class="media">{picture('about', 'p', p, '(max-width: 860px) 92vw, 40vw', image_alt(site['images']['about']), eager=True)}</span>
+      <figcaption style="margin-top:10px;font-size:.8125rem;color:var(--muted)">{e(image_caption(site['images']['about']))}</figcaption>
     </figure>
   </div>
 </main>
@@ -464,8 +495,10 @@ def render_about(arts: dict, site: dict) -> str:
 
 
 # GitHub Pages отдаёт 404.html по любому неверному адресу, в том числе из вложенных папок,
-# поэтому относительные пути на этой странице считаем от корня сайта через <base>.
-# Стили и скрипт подключаются из этого же скрипта: иначе браузер заранее запросит их по неверному пути.
+# поэтому относительные пути на этой странице нельзя считать от текущего адреса.
+# Если адрес сайта известен (SITE_URL), все ссылки строятся от корня: /REPO/assets/...
+# Если нет, корень угадывает этот скрипт и пишет <base>; он стоит первым в <head>, до любых относительных ссылок.
+# Стили и скрипт подключаются из него же: иначе браузер заранее запросит их по неверному пути.
 BASE_404_SCRIPT = """<script>(function(){var s=location.pathname.split('/'),b='/';
 if(/\\.github\\.io$/.test(location.hostname)&&s.length>2&&s[1]&&s[1]!=='articles'){b='/'+s[1]+'/';}
 document.write('<base href="'+b+'"><link rel="icon" href="'+b+'favicon.svg" type="image/svg+xml">'
@@ -474,16 +507,21 @@ document.write('<base href="'+b+'"><link rel="icon" href="'+b+'favicon.svg" type
 
 
 def render_404(site: dict) -> str:
-    p = ""
+    if SITE_URL:
+        # путь от корня домена, например /cloude-copy/ (или / для сайта в корне домена)
+        p = urlparse(SITE_URL).path.rstrip("/") + "/"
+        early = ""
+    else:
+        p = ""
+        early = BASE_404_SCRIPT
     body = f"""{header(p)}
-<main id="main" class="wrap not-found">
+<main id="main" class="wrap not-found" tabindex="-1">
   <h1>404</h1>
   <p class="prose" style="padding:0">{e("Такой страницы нет. Возможно, новость переехала или ссылка набрана с ошибкой.")}</p>
   <p><a class="btn" href="{p}index.html"><i class="ph ph-arrow-left" aria-hidden="true"></i><span>На главную</span></a></p>
 </main>
 {footer(p, site)}"""
-    base = (f'<base href="{attr(SITE_URL)}/">' + assets_tags("")) if SITE_URL else BASE_404_SCRIPT
-    return head(f"Страница не найдена | {site['name']}", site["description"], p, "404.html", None, base_tag=base) + "\n" + body
+    return head(f"Страница не найдена | {site['name']}", site["description"], p, "404.html", None, early=early) + "\n" + body
 
 
 # ---------------------------------------------------------------- сборка
@@ -502,13 +540,14 @@ def main() -> None:
     data = json.loads((CONTENT / "articles.json").read_text(encoding="utf-8"))
     arts = {a["slug"]: a for a in data["articles"]}
     for a in arts.values():
-        a.setdefault("image_alt", site["images"][a["slug"]]["caption"])
+        a.setdefault("image_alt", image_alt(site["images"][a["slug"]]))
     order = sorted(arts, key=lambda s: arts[s]["date"], reverse=True)
 
     (OUT / "articles").mkdir(parents=True, exist_ok=True)
     pages = {"index.html": render_index(arts, order, site), "about.html": render_about(arts, site), "404.html": render_404(site)}
     for slug in order:
         pages[f"articles/{slug}.html"] = render_article(arts[slug], arts, order, site)
+    # Пишем только эти страницы и .nojekyll; остальное в docs/ (картинки, CNAME своего домена) не трогаем и не удаляем.
     for name, text in pages.items():
         check_text(name, text)
         (OUT / name).write_text(text, encoding="utf-8")

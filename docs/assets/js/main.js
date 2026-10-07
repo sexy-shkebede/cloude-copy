@@ -1,10 +1,22 @@
-/* Канон: интерактив без зависимостей. Тема, меню, появление блоков, копирование ссылки, листание словаря. */
+/* Канон: интерактив без зависимостей. Тема, меню, переход к содержанию, лента «Коротко»,
+   появление блоков, копирование ссылки, листание словаря. */
 (function () {
   var root = document.documentElement;
   var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function storageGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
   function storageSet(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { /* приватный режим */ } }
+
+  /* ---------- «К содержанию»: фокус на <main> (работает и на 404 с <base>, где #main ведёт на другой адрес) ---------- */
+  document.querySelectorAll(".skip-link").forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      var main = document.getElementById("main");
+      if (!main) return;
+      e.preventDefault();
+      if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+      main.focus();
+    });
+  });
 
   /* ---------- тема ---------- */
   var themeBtn = document.querySelector(".theme-toggle");
@@ -15,9 +27,8 @@
   }
   function syncThemeLabel() {
     if (!themeBtn) return;
-    var dark = currentTheme() === "dark";
-    themeBtn.setAttribute("aria-label", dark ? "Включить светлую тему" : "Включить тёмную тему");
-    themeBtn.setAttribute("aria-pressed", dark ? "true" : "false");
+    // подпись называет действие, поэтому aria-pressed здесь не нужен
+    themeBtn.setAttribute("aria-label", currentTheme() === "dark" ? "Включить светлую тему" : "Включить тёмную тему");
   }
   if (themeBtn) {
     themeBtn.addEventListener("click", function () {
@@ -45,8 +56,26 @@
     mobileNav.setAttribute("inert", "");
     menuBtn.addEventListener("click", function () { setMenu(menuBtn.getAttribute("aria-expanded") !== "true"); });
     mobileNav.addEventListener("click", function (e) { if (e.target.closest("a")) setMenu(false); });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") setMenu(false); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && menuBtn.getAttribute("aria-expanded") === "true") {
+        setMenu(false);
+        menuBtn.focus();
+      }
+    });
     window.matchMedia("(min-width: 861px)").addEventListener("change", function (e) { if (e.matches) setMenu(false); });
+  }
+
+  /* ---------- лента «Коротко»: пауза, запоминается между визитами ---------- */
+  var ticker = document.querySelector(".ticker");
+  var tickerBtn = ticker && ticker.querySelector(".ticker-toggle");
+  if (ticker && tickerBtn) {
+    var setTicker = function (paused, save) {
+      ticker.classList.toggle("is-paused", paused);
+      tickerBtn.setAttribute("aria-pressed", paused ? "true" : "false");
+      if (save) storageSet("kanon-ticker", paused ? "paused" : "running");
+    };
+    setTicker(storageGet("kanon-ticker") === "paused", false);
+    tickerBtn.addEventListener("click", function () { setTicker(tickerBtn.getAttribute("aria-pressed") !== "true", true); });
   }
 
   /* ---------- появление блоков ---------- */
@@ -105,7 +134,11 @@
       var edge = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           var btn = entry.target === items[0] ? prev : next;
-          btn.disabled = entry.intersectionRatio > 0.95;
+          var other = btn === prev ? next : prev;
+          var off = entry.intersectionRatio > 0.95;
+          // отключённая кнопка теряет фокус: заранее переводим его на соседнюю (или на сам список)
+          if (off && document.activeElement === btn) (other.disabled ? scroller : other).focus();
+          btn.disabled = off;
         });
       }, { root: scroller, threshold: [0, 0.95, 1] });
       edge.observe(items[0]);
