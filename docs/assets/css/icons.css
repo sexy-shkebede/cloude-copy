@@ -1,0 +1,16 @@
+/* Phosphor Icons (MIT), урезано до используемых иконок */
+@font-face{font-family:'Phosphor';src:url('../icons/phosphor-subset.woff2') format('woff2');font-weight:normal;font-style:normal;font-display:block}
+.ph{font-family:'Phosphor'!important;speak:never;font-style:normal;font-weight:normal;font-variant:normal;text-transform:none;line-height:1;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;display:inline-block}
+.ph-arrow-right:before{content:"\e06c"}
+.ph-arrow-up-right:before{content:"\e092"}
+.ph-arrow-left:before{content:"\e058"}
+.ph-sun:before{content:"\e472"}
+.ph-moon:before{content:"\e330"}
+.ph-list:before{content:"\e2f0"}
+.ph-x:before{content:"\e4f6"}
+.ph-clock:before{content:"\e19a"}
+.ph-link-simple:before{content:"\e2e6"}
+.ph-check:before{content:"\e182"}
+.ph-book-open-text:before{content:"\e8f2"}
+.ph-pause:before{content:"\e39e"}
+.ph-play:before{content:"\e3d0"}

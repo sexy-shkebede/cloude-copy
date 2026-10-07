@@ -1,0 +1,2 @@
+# Termux: numpy, pillow и opencv ставятся через pkg (см. setup_termux.sh), здесь только Telegram
+python-telegram-bot>=22.0,<23

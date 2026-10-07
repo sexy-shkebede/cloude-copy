@@ -1,0 +1,5 @@
+# Для запуска на компьютере/сервере (Windows, Linux, macOS)
+python-telegram-bot>=22.0,<23
+numpy
+pillow>=10
+opencv-python-headless>=4.8
